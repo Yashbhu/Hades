@@ -1,355 +1,558 @@
 # Hades
 
-Local-first system health monitoring for a future AI OS agent.
+Local-first system health monitoring and diagnosis for a future AI OS agent.
 
-**Current milestone: M1 — Rust system-monitoring foundation.** Hades collects
-real CPU, memory, filesystem, and process metrics and exposes them through a
-typed Rust library and an `os-agent` CLI. There is no AI, no remediation, no
-daemon, no database, and no network service in this milestone.
+Hades is built in milestones. The current repository implements:
 
-## Why
+| Milestone | Status | What it adds |
+| --- | --- | --- |
+| **M1** | Complete | Rust CPU, memory, disk, and process collection; `os-agent status` and `processes` |
+| **M2** | Complete | Background monitoring, bounded rolling history, deterministic anomaly detection, incident lifecycle, JSON Lines events, `os-agent monitor` |
+| **M3** | Complete | Loopback JSON HTTP bridge exposing five registered read-only diagnostic tools, plus a typed Python client |
+| **M4** | Implemented | Local Ollama + LangChain diagnostic agent with bounded tool calling and Pydantic-validated reports; the optional live Ollama test requires a local model |
 
-The long-term project is a Linux system agent that watches system health,
-detects anomalies, investigates them with a local language model, remembers
-past incidents, and proposes remediations that a user must approve. Reliable,
-structured metrics are the foundation for all of that. M1 builds and tests that
-foundation only.
+There is no LangGraph, long-term memory, RAG, vector database, fine-tuning,
+remediation, web dashboard, or remote LLM provider in this repository.
+
+## Design principles
+
+- **Local first.** The Rust bridge binds only to loopback. The Python agent
+  accepts only loopback Ollama and bridge endpoints. There is no fallback to a
+  hosted model.
+- **Read-only diagnostics.** The only callable operations are explicitly
+  registered. There is no shell tool, command endpoint, executable-path input,
+  or filesystem mutation.
+- **Facts are separate from hypotheses.** M2 incidents contain measurements and
+  derived values. M4 reports keep tool observations separate from uncertain
+  causes.
+- **Missing data is not zero.** Unavailable metrics are `null` or omitted, with
+  an issue entry. Monitoring and tools never invent values.
+- **Bounded state and bounded work.** History and incidents are capped; the
+  agent has limits on model turns and tool calls; the bridge limits request
+  bodies and result sizes.
+- **Deterministic detection.** Anomaly detection is ordinary Rust code, not an
+  LLM.
 
 ## Platform support
 
-- Built, tested, and manually verified on **macOS 15.5 (arm64)** with the stable
-  Rust toolchain (1.91.1 at the time of writing).
-- The implementation uses `sysinfo`'s cross-platform APIs, so Linux is expected
-  to work, but **Linux has not been verified in this milestone**.
+- Built, tested, and manually verified on **macOS 15.5 (arm64)**.
+- Rust uses `sysinfo`'s cross-platform APIs. Linux is the target platform, but
+  **Linux has not been verified in this repository**.
 - Windows is not verified.
-- No root privileges are required. Metrics that the operating system denies to
-  an unprivileged user are reported as unavailable or omitted.
+- The Rust agent does not require root. Processes or fields hidden from the
+  current user are reported as unavailable, not collected by escalating
+  privileges.
+- Python 3.10 or newer is required.
 
-## Build and install
+## Quick start
 
-Requirements: Rust 1.85 or newer (the crate uses edition 2024).
+### 1. Build the Rust agent
 
 ```sh
 cargo build --release
 ./target/release/os-agent --help
-
-# Or install the binary into ~/.cargo/bin:
-cargo install --path .
 ```
 
-## CLI usage
+### 2. Install the Python packages
+
+The Python package contains both the M3 client (`hades_client`) and the M4 agent
+(`hades_agent`).
+
+```sh
+cd python
+python3 -m venv .venv
+.venv/bin/pip install -e '.[dev]'
+cd ..
+```
+
+### 3. Start Ollama and obtain a tool-calling model
+
+Install Ollama from <https://ollama.com>, then:
+
+```sh
+ollama serve
+ollama pull qwen2.5:7b
+```
+
+`qwen2.5:7b` is the documented default because it supports tool calling and runs
+on a typical developer machine. Any installed Ollama model with reliable tool
+calling can be selected with `--model` or `HADES_MODEL`; report generation also
+requires structured-output support.
+
+### 4. Start the Rust diagnostic service
+
+```sh
+./target/release/os-agent serve --bind 127.0.0.1:8765
+```
+
+`serve` starts the same monitoring engine as `monitor` and exposes its incident
+state and fresh diagnostics over loopback HTTP.
+
+### 5. Ask a question
+
+```sh
+python/.venv/bin/hades-agent ask "Why is memory usage high?"
+```
+
+Or investigate the newest incident known to the Rust monitor:
+
+```sh
+python/.venv/bin/hades-agent incident --latest
+```
+
+The Python entry point is named `hades-agent`, not `os-agent`, so the existing
+Rust CLI commands remain unchanged.
+
+## Architecture
+
+```text
+┌───────────────────────────── local machine ─────────────────────────────┐
+│                                                                         │
+│  Rust: os-agent                                                         │
+│  ├── sysinfo Collector ──► Snapshot                                     │
+│  ├── Monitor ──► incidents/events ──► bounded in-memory state           │
+│  ├── CLI: status / processes / monitor / serve                          │
+│  └── HTTP bridge (127.0.0.1 only)                                       │
+│         GET  /v1/tools                                                  │
+│         POST /v1/tools/call                                             │
+│                                                                         │
+│  Python: hades_client                                                   │
+│  └── typed HTTP client, response validation, timeouts                   │
+│                                                                         │
+│  Python: hades_agent                                                    │
+│  ├── DiagnosticToolbox: allowlist + Pydantic argument validation        │
+│  ├── LangChain ChatOllama: tool selection and report generation         │
+│  └── bounded investigation loop + Pydantic DiagnosticReport             │
+│                                                                         │
+│  Ollama (127.0.0.1:11434) ──► local tool-calling model                  │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+Rust collects and enforces access. Python never inspects the system directly
+and never executes fallback shell commands.
+
+### Rust source layout
+
+```text
+src/
+├── main.rs              Rust CLI (status, processes, monitor, serve)
+├── lib.rs               Public library surface
+├── config.rs            Validated monitoring thresholds and limits
+├── history.rs           Bounded metric history and trend calculations
+├── incident.rs          Incident, evidence, lifecycle types
+├── events.rs            Typed JSON Lines events
+├── monitor.rs           Pure detector + cancellable background engine
+├── snapshot.rs          Snapshot and live Collector
+├── metrics/             CPU, memory, disk, process metric types
+├── report.rs            Human-readable rendering
+└── bridge/
+    ├── mod.rs           Loopback HTTP service and request handling
+    ├── protocol.rs      Versioned request/response/error envelopes
+    └── tools.rs         Registered tools and bounded incident mirror
+tests/
+├── cli.rs               M1/M2 CLI integration tests
+└── http_api.rs          M3 HTTP integration tests
+```
+
+### Python source layout
+
+```text
+python/src/
+├── hades_client/        M3 typed client and validated result models
+└── hades_agent/
+    ├── config.py        Environment/CLI configuration, loopback enforcement
+    ├── tools.py         Exact five-tool allowlist and argument schemas
+    ├── model.py         Ollama preflight and ChatOllama construction
+    ├── agent.py         Bounded tool-calling investigation loop
+    ├── models.py        Pydantic incident/report/trace models
+    ├── cli.py           `hades-agent` CLI
+    └── errors.py        Actionable error types
+```
+
+## Rust CLI
+
+### M1: one-shot inspection
 
 ```text
 os-agent status [--json]
 os-agent processes [--sort cpu|memory] [--limit 1..100]
 ```
 
-| Command | Description |
-| --- | --- |
-| `os-agent status` | Human-readable snapshot of CPU, memory, disks, and the top 10 processes (sorted by CPU). |
-| `os-agent status --json` | The same snapshot as JSON on stdout. |
-| `os-agent processes --sort cpu` | Top processes by CPU utilization. |
-| `os-agent processes --sort memory` | Top processes by resident memory. |
-| `os-agent processes --limit N` | Number of processes to show. Default `10`, valid range `1..=100`. |
+`status` collects CPU, memory, disks, and the top 10 processes. `processes`
+prints a bounded process table. Process CPU is percent of one logical core and
+may exceed 100% for multi-threaded processes.
 
-Examples:
-
-```sh
-os-agent status
-os-agent status --json
-os-agent processes --sort cpu
-os-agent processes --sort memory --limit 5
-```
-
-`--sort` defaults to `cpu`. `--limit` is validated by the CLI: values outside
-`1..=100` or non-numeric values are rejected with exit code `2` and a message on
-stderr. Invalid subcommands and unknown flags also exit with code `2`.
-Successful runs exit `0`; I/O or serialization failures exit `1`.
-
-The `processes` command prints collection warnings (for example, unavailable
-memory data) to stderr, keeping stdout a clean process table.
-
-### Example human-readable output
-
-This is unedited output from the development machine:
+### M2: continuous monitoring
 
 ```text
-Hades system health
-Collected: 2026-10-23T00:17:01.106Z
-CPU: 77.7% across 8 logical cores (200 ms sample)
-  core 0: 71.9%, core 1: 58.8%, core 2: 55.9%, core 3: 50.0%, core 4: 97.1%, core 5: 97.0%, core 6: 97.0%, core 7: 94.1%
-Memory: 13.5 GiB used / 16.0 GiB total (84.2%), 5.6 GiB available, 59.4 MiB free
-Disks:
-  / [apfs]: 201.2 GiB used / 228.3 GiB (88.1%), 27.1 GiB available
-  /System/Volumes/Data [apfs]: 201.2 GiB used / 228.3 GiB (88.1%), 27.1 GiB available
-  /Volumes/boringNotch 2.7.3 [apfs]: 20.2 MiB used / 32.5 MiB (62.2%), 12.3 MiB available
-  /Volumes/Install OrbStack v2.2.3 [apfs]: 700.7 MiB used / 1.0 GiB (65.2%), 373.7 MiB available
-  /Volumes/Raycast [hfs]: 233.4 MiB used / 267.0 MiB (87.4%), 33.6 MiB available
-  /Volumes/Raycast 1 [hfs]: 233.4 MiB used / 267.0 MiB (87.4%), 33.6 MiB available
-  /Volumes/Yomu [hfs]: 17.8 MiB used / 42.0 MiB (42.4%), 24.2 MiB available
-  /Volumes/Dia [hfs]: 1.3 GiB used / 1.3 GiB (99.8%), 2.1 MiB available
-Top processes (10 shown, sorted by cpu):
-  PID     CPU%    MEMORY      NAME
-  42645   169.2   495.5 MiB   Arc
-  99987   83.3    645.7 MiB   com.apple.Virtualization.VirtualMachine
-  3219    49.0    8.9 MiB     bash
-  75646   39.8    662.5 MiB   opencode
-  3352    34.0    165.3 MiB   Browser Helper (Renderer)
-  32908   30.8    11.1 MiB    os-agent
-  41420   22.7    5.6 MiB     git
-  30171   22.6    760.9 MiB   Browser Helper (Renderer)
-  69154   17.8    148.5 MiB   zed
-  27286   8.4     63.3 MiB    siriinferenced
+os-agent monitor [--interval 5s] [--json-lines] [--duration 30s]
+                 [--cpu-threshold 90] [--cpu-recovery 85] [--cpu-critical 95]
+                 [--cpu-duration 30s]
+                 [--memory-threshold 10] [--memory-recovery 15] [--memory-critical 5]
+                 [--memory-duration 30s]
+                 [--disk-threshold 10] [--disk-recovery 15] [--disk-critical 3]
+                 [--history 60]
 ```
 
-CPU utilization is a measurement over a real 200 ms interval, so values vary
-between runs. Process CPU is relative to one logical core and may exceed 100%
-for multi-threaded processes.
+Defaults:
 
-## JSON output
+| Setting | Default |
+| --- | --- |
+| Sampling interval | `5s` |
+| Rolling history | 60 samples (5 minutes at 5s) |
+| Retained recovered incidents | 100 |
+| CPU trigger / recovery / critical | `90% / 85% / 95%` |
+| CPU sustained | 30 seconds (at least 6 valid samples at 5s) |
+| Memory available trigger / recovery / critical | `10% / 15% / 5%` |
+| Memory sustained | 30 seconds |
+| Disk available trigger / recovery / critical | `10% / 15% / 3%` |
+| Disk sustained | Immediate per mount (no transient timer) |
 
-`os-agent status --json` emits one JSON object with `schema_version: 1`. The
-same shape is available from the Rust API as `os_agent::Snapshot`.
+Memory pressure uses **available** memory, not `used`, because reclaimable cache
+can make `used` misleading. Disk detection uses available space per mounted
+filesystem and never recursively scans directories.
 
-| Field | Type | Notes |
+Monitoring never scans processes. This keeps the continuous path lightweight;
+process inspection remains available through M1 and M3 tools.
+
+#### Incident lifecycle
+
+States are `active`, `acknowledged`, and `recovered`. Acknowledging an incident
+does not mean it recovered. Recovery requires the metric to cross the hysteresis
+threshold (for example CPU at or below 85% after being at or above 90%).
+
+- One incident per condition per mount. Duplicate incidents are not created in
+  one cycle.
+- IDs are stable for the life of an open incident; a new incident gets a new ID
+  after recovery.
+- A recovery must cross the recovery threshold; values between trigger and
+  recovery do not flap the state.
+- Missing metrics are ignored for detection and are never treated as zero.
+- Recovered incidents are retained up to the configured bound. Open incidents
+  are not dropped.
+- Disk incidents for a mount that disappears remain open; disappearance is not
+  treated as recovery. This is a documented limitation.
+
+#### Events
+
+`--json-lines` prints one JSON object per line on stdout and nothing else. Human
+output goes to stdout only when `--json-lines` is absent. Event types are
+`incident_started`, `incident_updated`, `incident_recovered`, and
+`collection_error`. Collection errors are emitted only when the issue set
+changes, not every cycle.
+
+Actual example (one record, unedited):
+
+```json
+{"event":"incident_started","timestamp":"2026-10-23T00:28:08.784021Z","incident":{"id":"inc-000001","kind":"low_disk_space","subject":"/Volumes/Dia","severity":"critical","state":"active","started_at":"2026-10-23T00:28:08.784021Z","updated_at":"2026-10-23T00:28:08.784021Z","last_observed_at":"2026-10-23T00:28:08.784021Z","recovered_at":null,"summary":"Filesystem '/Volumes/Dia' has 0.2% available, at or below the 10.0% threshold","evidence":{"kind":"low_disk_space","observed":{"mount_point":"/Volumes/Dia","file_system":"hfs","total_bytes":1439592448,"available_bytes":2228224,"used_bytes":1437364224,"available_percent":0.15478158440575537},"derived":{"available_threshold_percent":10.0,"recovery_available_percent":15.0,"critical_available_percent":3.0}}}}
+```
+
+Incident evidence separates `observed` measurements from `derived` thresholds,
+averages, counts, durations, and trends. The detector does not claim a root
+cause.
+
+### M3: diagnostic service
+
+```text
+os-agent serve [--bind 127.0.0.1:8765] [--interval 5s] [--duration 30s]
+```
+
+Only loopback addresses are accepted. `--duration` is useful for bounded tests;
+the default is to run until Ctrl+C.
+
+Endpoints:
+
+| Method | Path | Purpose |
 | --- | --- | --- |
-| `schema_version` | integer | Currently `1`. |
-| `collected_at` | string | RFC 3339 timestamp in UTC, millisecond precision. |
-| `cpu` | object or `null` | `overall_percent` (0–100), `per_core_percent` array, `logical_core_count`, `sampling_interval_ms`. |
-| `memory` | object or `null` | All sizes in **bytes**. `used_bytes`, `available_bytes`, `free_bytes`, `used_percent`. |
-| `disks` | array | One object per mounted filesystem: `mount_point`, `file_system` (string or `null`), `total_bytes`, `available_bytes`, `used_bytes`, `used_percent`. |
-| `processes` | object | `sorted_by` (`cpu`/`memory`), requested `limit`, and `items` (array). |
-| `processes.items[]` | object | `pid`, `name`, `cpu_percent`, `memory_bytes` (bytes). |
-| `issues` | array | Partial-collection problems: `component` and `message`. Empty when everything was collected. |
+| `GET` | `/v1/tools` | Discovery: names, descriptions, input schemas, schema versions |
+| `POST` | `/v1/tools/call` | Invoke one registered tool with a versioned envelope |
 
-Important semantics:
+There is deliberately no endpoint for commands, executables, scripts, file
+writes, or arbitrary paths.
 
-- A metric that could not be collected is `null` (or an empty array plus an
-  entry in `issues`), never a fake zero. A legitimate `0.0` percentage is a
-  real measurement.
-- `used_percent` is `used / total × 100`, clamped to `0..=100`.
-- `memory.available_bytes` is memory usable by new applications without
-  swapping (including reclaimable cache where applicable).
-  `memory.free_bytes` is completely unused memory. They are intentionally
-  distinct.
-- `disks[].used_bytes` is `total_bytes - available_bytes`. On filesystems that
-  reserve blocks for privileged use this can be lower than the space occupied
-  by files.
-- Process CPU is percent of one logical core, so `cpu_percent` can exceed 100.
-- Process `name` is converted lossily to UTF-8. Command-line arguments,
-  environment variables, and executable paths are deliberately not collected.
+## M3 protocol
 
-<details>
-<summary>Full example JSON output (unedited, from the same macOS host)</summary>
+Protocol version: `1`. Tool output schemas: version `1`. Request bodies are
+limited to 64 KiB by default (configurable within 1 KiB–1 MiB in the library).
+
+Request:
 
 ```json
 {
-  "schema_version": 1,
-  "collected_at": "2026-10-23T00:17:06.327Z",
-  "cpu": {
-    "overall_percent": 73.30728912353516,
-    "per_core_percent": [
-      64.70588684082031,
-      53.125,
-      47.05882263183594,
-      42.42424392700195,
-      94.11764526367188,
-      96.96969604492188,
-      94.11764526367188,
-      93.93939208984375
-    ],
-    "logical_core_count": 8,
-    "sampling_interval_ms": 200
-  },
-  "memory": {
-    "total_bytes": 17179869184,
-    "used_bytes": 14550122496,
-    "available_bytes": 5687558144,
-    "free_bytes": 68845568,
-    "used_percent": 84.6928596496582
-  },
-  "disks": [
-    {
-      "mount_point": "/",
-      "file_system": "apfs",
-      "total_bytes": 245107195904,
-      "available_bytes": 29103345664,
-      "used_bytes": 216003850240,
-      "used_percent": 88.1262785628706
-    },
-    {
-      "mount_point": "/System/Volumes/Data",
-      "file_system": "apfs",
-      "total_bytes": 245107195904,
-      "available_bytes": 29103345664,
-      "used_bytes": 216003850240,
-      "used_percent": 88.1262785628706
-    },
-    {
-      "mount_point": "/Volumes/boringNotch 2.7.3",
-      "file_system": "apfs",
-      "total_bytes": 34086912,
-      "available_bytes": 12877824,
-      "used_bytes": 21209088,
-      "used_percent": 62.22062004325883
-    },
-    {
-      "mount_point": "/Volumes/Install OrbStack v2.2.3",
-      "file_system": "apfs",
-      "total_bytes": 1126653952,
-      "available_bytes": 391888896,
-      "used_bytes": 734765056,
-      "used_percent": 65.21656935527263
-    },
-    {
-      "mount_point": "/Volumes/Raycast",
-      "file_system": "hfs",
-      "total_bytes": 279969792,
-      "available_bytes": 35246080,
-      "used_bytes": 244723712,
-      "used_percent": 87.41075608614233
-    },
-    {
-      "mount_point": "/Volumes/Raycast 1",
-      "file_system": "hfs",
-      "total_bytes": 279969792,
-      "available_bytes": 35246080,
-      "used_bytes": 244723712,
-      "used_percent": 87.41075608614233
-    },
-    {
-      "mount_point": "/Volumes/Yomu",
-      "file_system": "hfs",
-      "total_bytes": 44040192,
-      "available_bytes": 25370624,
-      "used_bytes": 18669568,
-      "used_percent": 42.392113095238095
-    },
-    {
-      "mount_point": "/Volumes/Dia",
-      "file_system": "hfs",
-      "total_bytes": 1439592448,
-      "available_bytes": 2228224,
-      "used_bytes": 1437364224,
-      "used_percent": 99.84521841559425
-    }
-  ],
-  "processes": {
-    "sorted_by": "cpu",
-    "limit": 10,
-    "items": [
-      {
-        "pid": 42645,
-        "name": "Arc",
-        "cpu_percent": 180.06991577148438,
-        "memory_bytes": 514654208
-      },
-      {
-        "pid": 30171,
-        "name": "Browser Helper (Renderer)",
-        "cpu_percent": 51.905643463134766,
-        "memory_bytes": 619315200
-      },
-      {
-        "pid": 3219,
-        "name": "bash",
-        "cpu_percent": 41.509639739990234,
-        "memory_bytes": 9256960
-      },
-      {
-        "pid": 3352,
-        "name": "Browser Helper (Renderer)",
-        "cpu_percent": 31.195941925048828,
-        "memory_bytes": 176340992
-      },
-      {
-        "pid": 33742,
-        "name": "os-agent",
-        "cpu_percent": 30.586528778076172,
-        "memory_bytes": 11665408
-      },
-      {
-        "pid": 41420,
-        "name": "git",
-        "cpu_percent": 20.585817337036133,
-        "memory_bytes": 6406144
-      },
-      {
-        "pid": 75646,
-        "name": "opencode",
-        "cpu_percent": 19.301647186279297,
-        "memory_bytes": 279494656
-      },
-      {
-        "pid": 69154,
-        "name": "zed",
-        "cpu_percent": 14.961385726928711,
-        "memory_bytes": 157417472
-      },
-      {
-        "pid": 99987,
-        "name": "com.apple.Virtualization.VirtualMachine",
-        "cpu_percent": 10.449288368225098,
-        "memory_bytes": 961036288
-      },
-      {
-        "pid": 30468,
-        "name": "opencode",
-        "cpu_percent": 8.108152389526367,
-        "memory_bytes": 154288128
-      }
-    ]
-  },
-  "issues": []
+  "protocol_version": 1,
+  "request_id": "req-1",
+  "tool": "inspect_process",
+  "arguments": { "pid": 123 }
 }
 ```
 
-</details>
+Success:
 
-## How collection works
-
-1. `Collector::with_processes` creates a `sysinfo::System` with an initial
-   refresh and starts a `sysinfo::Disks` listing. The disk listing is a bounded
-   list of mounts; the code never walks directories or scans files.
-2. `Collector::collect` sleeps for `sysinfo::MINIMUM_CPU_UPDATE_INTERVAL`
-   (200 ms on macOS and Linux), then refreshes CPU, memory, processes, and
-   disks. This second CPU sample is what makes utilization meaningful; an
-   uninitialized first reading is never reported.
-3. CPU and memory are converted into typed metric structs. A missing value
-   becomes `None` plus a `CollectionIssue`; valid metrics are retained.
-4. Mount points are deduplicated. Filesystems reporting zero total capacity are
-   skipped and reported as issues. Permission errors from the OS simply leave
-   that filesystem out.
-5. Processes are filtered to PID, name, CPU, and resident memory, sorted by the
-   requested metric with deterministic tie-breaking (name, then PID), and
-   truncated to the limit.
-6. The snapshot is timestamped and returned. Rendering (`report`) and JSON
-   serialization are separate from collection.
-
-## Architecture
-
-```text
-src/
-├── main.rs              CLI parsing, output, exit behavior
-├── lib.rs               Public library surface
-├── metrics/
-│   ├── mod.rs           Shared percentage calculation and limits
-│   ├── cpu.rs           CPU metric type and conversion
-│   ├── memory.rs        Memory metric type and conversion
-│   ├── disk.rs          Filesystem capacity type and conversion
-│   └── processes.rs     Process type, sorting, truncation, collection
-├── snapshot.rs          Typed snapshot, issues, live Collector
-└── report.rs            Pure human-readable rendering
-tests/
-└── cli.rs               End-to-end CLI behavior
+```json
+{
+  "protocol_version": 1,
+  "request_id": "req-1",
+  "status": "ok",
+  "result": {
+    "schema_version": 1,
+    "data": {
+      "pid": 123,
+      "name": "example",
+      "cpu_percent": 1.5,
+      "memory_bytes": 4096,
+      "status": "sleep",
+      "run_time_seconds": 10,
+      "executable_path_available": true
+    }
+  }
+}
 ```
 
-The library has no CLI dependencies and can be reused by a future background
-monitor or the planned Python orchestrator through a stable interface. Pure
-calculations and sorting live in `metrics/*` and are tested without touching
-live system state; only `Collector` reads the OS.
+Structured error:
+
+```json
+{
+  "protocol_version": 1,
+  "request_id": "req-2",
+  "status": "error",
+  "error": {
+    "code": "unknown_tool",
+    "message": "unknown tool 'run_shell'",
+    "details": { "tool": "run_shell" }
+  }
+}
+```
+
+`request_id` is echoed when it could be parsed. Malformed JSON cannot supply one,
+so it is `null`. Unknown tools are never dispatched.
+
+### Tools and contracts
+
+All tools are read-only. Names are exact and stable.
+
+| Tool | Input | Output (`data`) |
+| --- | --- | --- |
+| `get_system_metrics` | `{}` | One M1 snapshot: `schema_version`, `collected_at`, nullable `cpu`/`memory`, `disks`, `processes`, `issues`. Process collection is disabled, so `processes.items` is empty and `limit` is `0`. |
+| `list_top_processes` | `{"sort":"cpu"|"memory","limit":1..100}`; defaults `cpu`, `10` | `sorted_by`, `limit`, `items` (`pid`, `name`, `cpu_percent`, `memory_bytes`), `issues`. |
+| `inspect_process` | `{"pid":1..4294967295}` | `pid`, `name`, `cpu_percent`, `memory_bytes`, `status`, `run_time_seconds`, `executable_path_available`. Command line, environment, user, and executable path are never returned. |
+| `get_disk_usage` | `{}` | `disks` (mount point, filesystem, total/available/used bytes, used percent) and `issues`. No recursive scan. |
+| `get_recent_incidents` | `{"limit":1..100}`; default `20` | `incidents` (full state, timestamps, severity, summary, evidence) and `total_known`. Empty list is valid. |
+
+Stable error codes include `invalid_request`, `unsupported_protocol_version`,
+`unknown_tool`, `invalid_arguments`, `process_unavailable`,
+`request_too_large`, `unsupported_media_type`, `method_not_allowed`,
+`not_found`, and `internal_error`.
+
+HTTP status mapping:
+
+| Condition | Status |
+| --- | --- |
+| Valid tool success | `200` |
+| Malformed JSON/envelope or unsupported protocol | `400` |
+| Unknown tool, missing process, unknown path | `404` |
+| Wrong method | `405` |
+| Body too large | `413` |
+| Non-JSON content type | `415` |
+| Invalid arguments | `422` |
+| Internal failure | `500` |
+
+### Transport rationale and limits
+
+- **Loopback HTTP + JSON** was chosen because the project had no existing IPC
+  layer, Python standard-library HTTP support is sufficient, and the protocol is
+  easy to inspect. A custom binary IPC layer or gRPC would add dependencies and
+  complexity without a demonstrated need.
+- The server polls for shutdown at least every 100 ms. The monitor uses short
+  cancellation slices, so shutdown is prompt even with a long sampling interval.
+- Tools perform one bounded collection cycle (about 200–300 ms on the verified
+  host) or a single process refresh. `get_recent_incidents` reads bounded
+  in-memory state (sub-millisecond in local measurements). There are no
+  unbounded loops or retries server-side.
+- Request bodies and response result sets are bounded. Client timeouts are
+  configurable; the Python client defaults to 10 seconds per tool request.
+- Client disconnects do not crash the service. Requests are processed
+  sequentially.
+
+### Security assumptions
+
+Loopback binding is **not** a complete security boundary. Any local process can
+connect to the port. This milestone has:
+
+- no authentication or authorization;
+- no TLS;
+- no per-user access control;
+- no request logging of process data;
+- no sensitive process fields (command line, environment, executable paths).
+
+Do not bind to a non-loopback interface; the service and client reject it. If
+stronger isolation is needed later, add OS-level access controls or authenticated
+local transport. The service is read-only but can disclose system resource and
+process-name information to any local user who can reach the port.
+
+## Python client (M3)
+
+```python
+from hades_client import HadesClient, RemoteToolError
+
+client = HadesClient("http://127.0.0.1:8765", timeout=10)
+
+tools = client.list_tools()
+metrics = client.get_system_metrics()
+processes = client.list_top_processes(sort="memory", limit=5)
+process = client.inspect_process(pid=123)
+disks = client.get_disk_usage()
+incidents = client.get_recent_incidents(limit=20)
+
+try:
+    client.inspect_process(pid=999999)
+except RemoteToolError as error:
+    print(error.code, error.message)
+```
+
+The client validates protocol version, request IDs, response shapes, and tool
+payload fields. It distinguishes:
+
+- connection failures (`AgentConnectionError`);
+- timeouts (`AgentTimeoutError`);
+- protocol mismatches and malformed responses (`ProtocolError`,
+  `ProtocolVersionError`);
+- structured tool failures (`RemoteToolError`).
+
+It does not retry requests and does not fall back to local commands. Methods are
+synchronous and stateless; the client can later be adapted as a LangChain tool
+without changing the Rust protocol.
+
+## M4 diagnostic agent
+
+### Model configuration
+
+All model traffic is intended for a local Ollama instance. A non-loopback
+Ollama URL is rejected.
+
+| Environment variable | Default | Meaning |
+| --- | --- | --- |
+| `HADES_MODEL` | `qwen2.5:7b` | Ollama model name |
+| `HADES_OLLAMA_URL` | `http://127.0.0.1:11434` | Local Ollama endpoint; `OLLAMA_BASE_URL` is a fallback |
+| `HADES_BRIDGE_URL` | `http://127.0.0.1:8765` | Rust service endpoint |
+| `HADES_MODEL_TIMEOUT` | `120` | Model request timeout, seconds |
+| `HADES_TOOL_TIMEOUT` | `10` | Tool request timeout, seconds |
+| `HADES_MAX_TOOL_CALLS` | `8` | Tool-call budget per investigation (1–32) |
+| `HADES_MAX_ITERATIONS` | `6` | Model turns per investigation (1–16) |
+| `HADES_NUM_CTX` | `16384` | Ollama context window |
+| `HADES_NUM_PREDICT` | `1024` | Maximum generated tokens per response |
+| `HADES_TEMPERATURE` | `0.0` | Sampling temperature |
+| `HADES_SEED` | `0` | Sampling seed |
+
+CLI flags (`--model`, `--ollama-url`, `--bridge-url`, `--max-tool-calls`, and so
+on) override environment values and are validated again.
+
+### Investigation flow
+
+1. The CLI loads a question, or a structured incident from `--file`/`--latest`.
+2. It discovers M3 tools and checks that all five expected names exist. Extra
+   server tools are not exposed.
+3. The agent binds only those five LangChain `StructuredTool` schemas to the
+   local chat model and supplies a diagnostic system prompt.
+4. The model may request tools. **Application code**, not the prompt, enforces
+   the allowlist and re-validates arguments with Pydantic before dispatch.
+5. Each successful or failed call is executed through `hades_client`; results are
+   returned to the model as untrusted data. Tool results are truncated at a
+   bounded size (4,096 characters by default) with an explicit marker; the trace
+   records whether truncation occurred.
+6. The loop stops when the model returns no tool call, the tool-call budget is
+   exhausted, the iteration limit is reached, or a transport/protocol failure is
+   terminal. There is no LangGraph.
+7. A second structured-output call produces a Pydantic-validated
+   `DiagnosticReport`. Evidence citations are checked against successful tool
+   calls; invalid reports get one repair attempt.
+8. The result includes the report plus an independent tool trace containing the
+   actual arguments, outputs, errors, and durations.
+
+The tool executor never constructs shell commands. Model-generated strings are
+only used as validated tool arguments (`sort`, `limit`, `pid`).
+
+### Report shape
+
+`DiagnosticReport` contains:
+
+- `summary`: what appears to be happening;
+- `evidence[]`: `tool` plus a factual `finding`; only successful calls may be
+  cited;
+- `likely_causes[]`: hypotheses with confidence, rationale, and indices into the
+  evidence list;
+- `confidence`: qualitative level (`low`/`medium`/`high`) and explanation;
+- `next_checks[]`: additional read-only checks;
+- `data_gaps[]`: what the investigation could not obtain.
+
+The observations (`evidence`) and hypotheses (`likely_causes`) are separate
+fields on purpose. A hypothesis is rejected unless at least one observation is
+present, and every evidence item must reference a successful tool call. This
+does not prove that every phrase is accurate; the tool trace remains the ground
+truth for what was actually measured.
+
+### CLI examples
+
+```sh
+hades-agent ask "Why is memory usage high?"
+hades-agent ask "Is the low disk space on /Volumes/Dia critical?" --json
+hades-agent incident --latest
+hades-agent incident --file /tmp/incident.json
+hades-agent ask "What changed?" --model llama3.1:8b --max-tool-calls 4
+```
+
+Illustrative text output (model-dependent; this is not a live transcript):
+
+```text
+Diagnosis
+=========
+Available memory is low while disk capacity is stable.
+
+Observed evidence
+-----------------
+1. [get_system_metrics] Memory available was 8.2% of 16 GiB.
+2. [list_top_processes] The five largest resident-memory processes were
+   browser and editor processes.
+
+Likely causes (hypotheses)
+--------------------------
+1. Several large applications are resident at the same time (confidence: medium)
+   The snapshot shows high resident memory in user applications, but no
+   historical baseline is available.
+   Supporting evidence: 1, 2
+
+Confidence: medium
+Only one snapshot was collected; process memory can be shared.
+
+Next read-only checks
+---------------------
+- Collect metrics over several minutes to see whether available memory recovers.
+
+Note: hypotheses are model-generated and may be wrong. Verify them before
+acting. Hades performs no remediation.
+```
+
+JSON output contains `question`, `incident`, `report`, `tool_calls`, `model`,
+`iterations`, `budget_exhausted`, `iteration_limit_reached`, and `limits`.
+
+### Privacy and untrusted input
+
+- Prompts, incident text, and tool results are sent only to the configured
+  loopback Ollama endpoint and the loopback Rust bridge. This project does not
+  intentionally send prompts to a remote provider and has no remote fallback.
+- Ollama may download a model when the user runs `ollama pull`; that is a
+  separate network action. Operating-system, proxy, or Ollama configuration
+  could cause other traffic. Verify with your own network monitoring if needed;
+  this README does not claim zero network traffic under all configurations.
+- Incident text and tool output are treated as untrusted data in the prompt.
+  Application code does not interpret them as instructions.
+- Environment variables and secrets are never added to prompts.
+- The model is not trusted. It can be wrong, overconfident, or manipulated by
+  data it reads. Reports are advisory, not authoritative, and never trigger
+  remediation.
 
 ## Testing and linting
+
+Rust:
 
 ```sh
 cargo fmt --check
@@ -357,52 +560,101 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo test
 ```
 
-The test suite has 30 unit tests and 11 CLI integration tests. Unit tests cover
-percentage edge cases, unavailable metrics, byte formatting, process sorting
-and limits, snapshot serialization/round-tripping, and report rendering. CLI
-tests use `assert_cmd` for valid human and JSON output, schema shape, limits,
-sorting, and invalid arguments. Live tests assert ranges and structural
-properties only; they do not depend on exact CPU percentages, memory sizes, or
-specific running processes.
+Python (from the repository root, with the installed virtual environment):
 
-Each CLI test that collects a snapshot waits for the CPU sampling interval, so
-the integration suite takes about 1.5 seconds on a warm build.
+```sh
+cargo build --bin os-agent
+python/.venv/bin/ruff check python
+PYTHONPATH=python/src python/.venv/bin/python -m unittest discover -s python/tests -v
+```
+
+The Python suite includes deterministic unit tests with fake model responses and
+fake HTTP services, plus integration tests that start the real Rust service and
+exercise all five tools. The default suite does **not** require Ollama.
+
+Optional live LLM integration test (requires Ollama, the model, and the Rust
+service; the test starts its own Rust service):
+
+```sh
+HADES_OLLAMA_INTEGRATION=1 \
+  PYTHONPATH=python/src python/.venv/bin/python -m unittest discover \
+  -s python/tests -p 'test_ollama_integration.py' -v
+```
+
+Test suites do not depend on a specific CPU load or a particular unrelated
+process. Live process tests inspect the test process itself.
+
+## Performance measurements
+
+Measured with a release build on the verified development host (macOS, arm64)
+using `/usr/bin/time -l`. CPU percentages are approximate:
+`(user + sys) / real`, normalized to one core, not a benchmark under controlled
+load. Short runs only.
+
+| Workload | Real | User | Sys | Max RSS (MB) | Approx. CPU |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `monitor --interval 1s --duration 20s --json-lines` | 20.79 s | 0.13 s | 1.11 s | 9.4 MiB | 6.0% |
+| `monitor --interval 5s --duration 30s --json-lines` | 30.33 s | 0.06 s | 0.45 s | 8.9 MiB | 1.7% |
+| `serve --interval 5s --duration 20s` (idle) | 20.33 s | 0.04 s | 0.30 s | 9.4 MiB | 1.7% |
+| `status --json` (one snapshot) | 0.33 s | 0.01 s | 0.10 s | 11.0 MiB | 33% over 0.33 s |
+
+The one-shot `status` figure is dominated by the intentional CPU sampling
+window, so its percentage is not a useful sustained-overhead number.
+
+Local tool latency (real Rust service, 3–5 calls each, Python client):
+
+| Tool | Mean | Range |
+| --- | ---: | ---: |
+| `get_system_metrics` | 292.5 ms | 282–304 ms |
+| `get_disk_usage` | 287.2 ms | 262–300 ms |
+| `list_top_processes` | 300.4 ms | 291–305 ms |
+| `inspect_process` | 206.4 ms | 206–207 ms |
+| `get_recent_incidents` | 0.9 ms | 0.4–1.7 ms |
+
+The collection tools include the same CPU sampling interval as M1. Monitoring
+and incident queries do not scan processes.
 
 ## Known limitations
 
-- **One-shot only.** Every command collects a fresh snapshot. There is no
-  history, persistence, or background sampling in M1.
-- **CPU needs a sampling window.** Each snapshot adds at least ~200 ms of
-  latency by design. Extremely short-lived spikes can be missed.
-- **Process CPU exceeds 100%.** It is measured per logical core and is not
-  normalized by core count.
-- **Memory values are OS-reported.** `used` and `available` semantics depend on
-  the platform (for example, macOS and Linux account for cache differently).
-- **Disk usage is derived.** Reserved blocks, snapshots, and shared APFS
-  containers can make usage differ from figures reported by other tools.
-  Mounted disk images (`.dmg`) also appear as filesystems.
-- **Platform coverage is limited.** macOS is verified; Linux is expected but
-  unverified; Windows is unverified.
-- **Permissions and races.** A process can exit between refreshes, and some
-  fields may be hidden for other users' processes. Such entries are skipped;
-  monitoring never escalates privileges.
-- **Lossy names.** Non-UTF-8 process names are lossily converted. Control
-  characters are replaced in the human report (JSON keeps the lossy name).
-- **No sensitive process details.** Arguments, environment variables, users,
-  and executable paths are not collected.
-- **No stable API promise yet.** The Rust API and JSON schema may evolve in
-  later milestones; `schema_version` exists for that reason.
+- **LLM diagnoses are unreliable.** The local model can hallucinate, miss
+  evidence, or overstate confidence. The report validation checks structure and
+  citations, not the truth of every phrase. Use the tool trace.
+- **No long-term memory, RAG, or LangGraph.** Each investigation is independent;
+  there is no cross-session learning or graph workflow.
+- **Tool-call budget.** Investigations stop after the configured budget or turn
+  limit. Some problems need more evidence.
+- **Small context window.** Tool results and history are bounded/truncated; the
+  model may not see every detail.
+- **Bridge authentication.** Loopback is not a trust boundary. Any local process
+  can call the read-only tools. The service does not log process data, but tool
+  results can reveal process names and resource use.
+- **No remediation.** Acknowledging an incident or producing a diagnosis changes
+  nothing on the system.
+- **Disk disappearance.** An open disk incident is not recovered when its mount
+  disappears. This is conservative but can leave an incident open.
+- **CPU duration is wall-clock from the first qualifying sample.** At a 5-second
+  interval, six samples cover about 25 seconds of elapsed time even though the
+  configured duration is 30 seconds. The configured duration determines the
+  required sample count.
+- **Platform coverage.** macOS is verified; Linux is expected but unverified;
+  Windows is unverified. Some metadata is platform-dependent.
+- **Process CPU semantics.** Values are percent of one logical core and can
+  exceed 100%; memory is resident memory.
+- **Metric semantics vary by OS.** Memory availability and filesystem reserved
+  blocks differ across platforms.
+- **No root.** Hidden processes or metrics are unavailable rather than
+  collected by escalating privileges.
+- **Schemas may evolve.** Protocol and output schema versions exist for future
+  compatibility but are not yet a long-term stability promise.
 
 ## Roadmap
 
-M1 (this milestone) is complete: metrics, snapshot, CLI, errors, tests, docs.
+Completed: M1 metrics/CLI, M2 monitoring/detection/events, M3 bridge/client, M4
+local LLM diagnosis.
 
-Future milestones are **not implemented**:
-
-- M2: continuous background monitoring and time-series capture
-- M3: baseline/anomaly detection
-- M4: local-LLM investigation and incident memory
-- M5: user-approved remediation with auditability
+Potential next milestone (not implemented): LangGraph-based stateful
+investigation, incident memory/RAG, and user-approved remediation with an audit
+trail. These are proposals, not current functionality.
 
 ## License
 

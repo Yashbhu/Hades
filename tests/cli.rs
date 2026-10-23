@@ -1,6 +1,7 @@
 use assert_cmd::Command;
 use predicates::prelude::*;
 use serde_json::Value;
+use std::time::Duration;
 
 fn os_agent() -> Command {
     Command::cargo_bin("os-agent").expect("the os-agent binary should build")
@@ -171,4 +172,109 @@ fn prints_version() {
         .assert()
         .success()
         .stdout(predicate::str::contains(env!("CARGO_PKG_VERSION")));
+}
+
+#[test]
+fn monitor_help_lists_configuration_options() {
+    os_agent()
+        .args(["monitor", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--interval"))
+        .stdout(predicate::str::contains("--cpu-threshold"))
+        .stdout(predicate::str::contains("--memory-threshold"))
+        .stdout(predicate::str::contains("--disk-threshold"))
+        .stdout(predicate::str::contains("--json-lines"));
+}
+
+#[test]
+fn monitor_rejects_invalid_duration_syntax() {
+    os_agent()
+        .args(["monitor", "--interval", "soon"])
+        .assert()
+        .failure()
+        .code(2)
+        .stderr(predicate::str::contains("not a valid duration"));
+}
+
+#[test]
+fn monitor_rejects_out_of_range_percentages() {
+    os_agent()
+        .args(["monitor", "--cpu-threshold", "101"])
+        .assert()
+        .failure()
+        .code(2)
+        .stderr(predicate::str::contains("between 0 and 100"));
+}
+
+#[test]
+fn monitor_rejects_incompatible_thresholds() {
+    os_agent()
+        .args([
+            "monitor",
+            "--cpu-threshold",
+            "80",
+            "--cpu-recovery",
+            "90",
+            "--duration",
+            "1s",
+        ])
+        .assert()
+        .failure()
+        .code(1)
+        .stderr(predicate::str::contains("invalid configuration"))
+        .stderr(predicate::str::contains("CPU recovery threshold"));
+}
+
+#[test]
+fn monitor_rejects_history_below_the_minimum() {
+    os_agent()
+        .args(["monitor", "--history", "1", "--duration", "1s"])
+        .assert()
+        .failure()
+        .code(1)
+        .stderr(predicate::str::contains("history limit must be between"));
+}
+
+#[test]
+fn monitor_emits_only_json_lines() {
+    let mut command = os_agent();
+    command
+        .args([
+            "monitor",
+            "--interval",
+            "250ms",
+            "--duration",
+            "1s",
+            "--json-lines",
+        ])
+        .timeout(Duration::from_secs(10));
+    let output = command.output().expect("failed to run monitor");
+    assert!(output.status.success(), "monitor failed: {output:?}");
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be UTF-8");
+    assert!(!stdout.contains("Hades monitor"));
+    assert!(!stdout.contains("Monitor stopped"));
+    for line in stdout.lines() {
+        let event: Value = serde_json::from_str(line)
+            .unwrap_or_else(|error| panic!("non-JSON line {line:?}: {error}"));
+        assert!(
+            event["event"].as_str().is_some(),
+            "event line should have an event tag: {line}"
+        );
+    }
+}
+
+#[test]
+fn monitor_human_output_reports_start_and_stop() {
+    let mut command = os_agent();
+    command
+        .args(["monitor", "--interval", "500ms", "--duration", "1s"])
+        .timeout(Duration::from_secs(10));
+    command
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Hades monitor"))
+        .stdout(predicate::str::contains("Sampling every 500ms"))
+        .stdout(predicate::str::contains("Press Ctrl+C to stop").not())
+        .stdout(predicate::str::contains("Monitor stopped."));
 }

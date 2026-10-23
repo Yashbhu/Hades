@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use chrono::{SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
-use sysinfo::{Disks, MINIMUM_CPU_UPDATE_INTERVAL, ProcessesToUpdate, System};
+use sysinfo::{CpuRefreshKind, Disks, MINIMUM_CPU_UPDATE_INTERVAL, ProcessesToUpdate, System};
 
 use crate::metrics::cpu::CpuMetrics;
 use crate::metrics::disk::DiskMetrics;
@@ -74,6 +74,7 @@ pub struct Collector {
     process_sort: ProcessSort,
     process_limit: usize,
     sample_interval: Duration,
+    collect_processes: bool,
 }
 
 impl Default for Collector {
@@ -86,6 +87,37 @@ impl Collector {
     /// Create a collector using the default process ranking (CPU, 10 items).
     pub fn new() -> Self {
         Self::with_processes(ProcessSort::Cpu, DEFAULT_PROCESS_LIMIT)
+    }
+
+    /// Create a collector that does not scan processes.
+    ///
+    /// Continuous monitoring only needs CPU, memory, and filesystem capacity,
+    /// so skipping the process scan keeps the sampling path lightweight. The
+    /// returned snapshot has an empty process list with `limit: 0`.
+    pub fn without_processes() -> Self {
+        // Do not call `System::new_all()` here: it scans every process even
+        // though monitoring never needs them. Initialize only CPU and memory.
+        let mut system = System::new();
+        system.refresh_cpu_list(CpuRefreshKind::everything());
+        system.refresh_cpu_usage();
+        Self {
+            system,
+            disks: Disks::new_with_refreshed_list(),
+            process_sort: ProcessSort::Cpu,
+            process_limit: 0,
+            sample_interval: MINIMUM_CPU_UPDATE_INTERVAL,
+            collect_processes: false,
+        }
+    }
+
+    /// Enable or disable process collection on an existing collector.
+    pub fn set_process_collection(&mut self, enabled: bool) {
+        self.collect_processes = enabled;
+    }
+
+    /// Whether this collector scans processes.
+    pub fn collects_processes(&self) -> bool {
+        self.collect_processes
     }
 
     /// Create a collector with a specific process ranking and limit.
@@ -102,6 +134,7 @@ impl Collector {
             process_sort,
             process_limit: process_limit.min(MAX_PROCESS_LIMIT),
             sample_interval: MINIMUM_CPU_UPDATE_INTERVAL,
+            collect_processes: true,
         }
     }
 
@@ -112,7 +145,11 @@ impl Collector {
         std::thread::sleep(self.sample_interval);
         self.system.refresh_cpu_usage();
         self.system.refresh_memory();
-        let refreshed_processes = self.system.refresh_processes(ProcessesToUpdate::All, true);
+        let refreshed_processes = if self.collect_processes {
+            Some(self.system.refresh_processes(ProcessesToUpdate::All, true))
+        } else {
+            None
+        };
         self.disks.refresh(true);
 
         let cpu = CpuMetrics::from_system(
@@ -160,14 +197,17 @@ impl Collector {
             ));
         }
 
-        if refreshed_processes == 0 {
+        if refreshed_processes == Some(0) {
             issues.push(CollectionIssue::new(
                 "processes",
                 "The platform reported no running processes",
             ));
         }
-        let processes =
-            TopProcesses::from_system(&self.system, self.process_sort, self.process_limit);
+        let processes = if self.collect_processes {
+            TopProcesses::from_system(&self.system, self.process_sort, self.process_limit)
+        } else {
+            TopProcesses::from_processes(Vec::new(), self.process_sort, 0)
+        };
 
         Snapshot {
             schema_version: SCHEMA_VERSION,
@@ -260,5 +300,13 @@ mod tests {
         let snapshot = complete_snapshot();
         let parsed = chrono::DateTime::parse_from_rfc3339(&snapshot.collected_at);
         assert!(parsed.is_ok());
+    }
+
+    #[test]
+    fn process_collection_can_be_disabled_for_monitoring() {
+        let mut collector = crate::snapshot::Collector::without_processes();
+        assert!(!collector.collects_processes());
+        collector.set_process_collection(true);
+        assert!(collector.collects_processes());
     }
 }
