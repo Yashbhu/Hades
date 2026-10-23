@@ -1,0 +1,441 @@
+[
+  {
+    "path": "deterministic",
+    "backend": "deterministic",
+    "scenario": "normal_operation",
+    "question": "Is the system healthy?",
+    "duration_ms": 1416.018542018719,
+    "elapsed_ms": 1416.0277080954984,
+    "model_invocations": 0,
+    "tool_calls": [
+      {
+        "name": "get_system_metrics",
+        "arguments": {},
+        "ok": true,
+        "output": "{\"ok\":true,\"tool\":\"get_system_metrics\",\"schema_version\":1,\"data\":{\"schema_version\":1,\"collected_at\":\"2026-10-23T17:31:13.048Z\",\"cpu\":{\"overall_percent\":37.59294509887695,\"per_core_percent\":[75.0,73.07691955566406,68.0,64.0,16.666667938232422,4.0,0.0,0.0],\"logical_core_count\":8,\"sampling_interval_ms\":200},\"memory\":{\"total_bytes\":17179869184,\"used_bytes\":14150582272,\"available_bytes\":7838547968,\"free_bytes\":64110592,\"used_percent\":82.36722946166992},\"disks\":[{\"mount_point\":\"/\",\"file_system\":\"apfs\",\"total_bytes\":245107195904,\"available_bytes\":49270386752,\"used_bytes\":195836809152,\"used_percent\":79.8984331854143},{\"mount_point\":\"/System/Volumes/Data\",\"file_system\":\"apfs\",\"total_bytes\":245107195904,\"available_bytes\":49270386752,\"used_bytes\":195836809152,\"used_percent\":79.8984331854143},{\"mount_point\":\"/Volumes/boringNotch 2.7.3\",\"file_system\":\"apfs\",\"total_bytes\":34086912,\"available_bytes\":12877824,\"used_bytes\":21209088,\"used_percent\":62.22062004325883},{\"mount_point\":\"/Volumes/Install OrbStack v2.2.3\",\"file_system\":\"apfs\",\"total_bytes\":1126653952,\"available_bytes\":391888896,\"used_bytes\":734765056,\"used_percent\":65.21656935527263},{\"mount_point\":\"/Volumes/Raycast\",\"file_system\":\"hfs\",\"total_bytes\":279969792,\"available_bytes\":35246080,\"used_bytes\":244723712,\"used_percent\":87.41075608614233},{\"mount_point\":\"/Volumes/Raycast 1\",\"file_system\":\"hfs\",\"total_bytes\":279969792,\"available_bytes\":35246080,\"used_bytes\":244723712,\"used_percent\":87.41075608614233},{\"mount_point\":\"/Volumes/Yomu\",\"file_system\":\"hfs\",\"total_bytes\":44040192,\"available_bytes\":25370624,\"used_bytes\":18669568,\"used_percent\":42.392113095238095},{\"mount_point\":\"/Volumes/Dia\",\"file_system\":\"hfs\",\"total_bytes\":1439592448,\"available_bytes\":2228224,\"used_bytes\":1437364224,\"used_percent\":99.84521841559425}],\"processes\":{\"sorted_by\":\"cpu\",\"limit\":0,\"items\":[],\"issues\":[]},\"issues\":[]}}",
+        "error": null,
+        "duration_ms": 356.4971669111401,
+        "truncated": false
+      },
+      {
+        "name": "get_disk_usage",
+        "arguments": {},
+        "ok": true,
+        "output": "{\"ok\":true,\"tool\":\"get_disk_usage\",\"schema_version\":1,\"data\":{\"disks\":[{\"mount_point\":\"/\",\"file_system\":\"apfs\",\"total_bytes\":245107195904,\"available_bytes\":49270415424,\"used_bytes\":195836780480,\"used_percent\":79.89842148767534},{\"mount_point\":\"/System/Volumes/Data\",\"file_system\":\"apfs\",\"total_bytes\":245107195904,\"available_bytes\":49270415424,\"used_bytes\":195836780480,\"used_percent\":79.89842148767534},{\"mount_point\":\"/Volumes/boringNotch 2.7.3\",\"file_system\":\"apfs\",\"total_bytes\":34086912,\"available_bytes\":12877824,\"used_bytes\":21209088,\"used_percent\":62.22062004325883},{\"mount_point\":\"/Volumes/Install OrbStack v2.2.3\",\"file_system\":\"apfs\",\"total_bytes\":1126653952,\"available_bytes\":391888896,\"used_bytes\":734765056,\"used_percent\":65.21656935527263},{\"mount_point\":\"/Volumes/Raycast\",\"file_system\":\"hfs\",\"total_bytes\":279969792,\"available_bytes\":35246080,\"used_bytes\":244723712,\"used_percent\":87.41075608614233},{\"mount_point\":\"/Volumes/Raycast 1\",\"file_system\":\"hfs\",\"total_bytes\":279969792,\"available_bytes\":35246080,\"used_bytes\":244723712,\"used_percent\":87.41075608614233},{\"mount_point\":\"/Volumes/Yomu\",\"file_system\":\"hfs\",\"total_bytes\":44040192,\"available_bytes\":25370624,\"used_bytes\":18669568,\"used_percent\":42.392113095238095},{\"mount_point\":\"/Volumes/Dia\",\"file_system\":\"hfs\",\"total_bytes\":1439592448,\"available_bytes\":2228224,\"used_bytes\":1437364224,\"used_percent\":99.84521841559425}],\"issues\":[]}}",
+        "error": null,
+        "duration_ms": 563.1107920780778,
+        "truncated": false
+      },
+      {
+        "name": "list_top_processes",
+        "arguments": {
+          "sort": "cpu",
+          "limit": 5
+        },
+        "ok": true,
+        "output": "{\"ok\":true,\"tool\":\"list_top_processes\",\"schema_version\":1,\"data\":{\"sorted_by\":\"cpu\",\"limit\":5,\"items\":[{\"pid\":86615,\"name\":\"deleted\",\"cpu_percent\":75.3721923828125,\"memory_bytes\":29704192,\"status\":null,\"run_time_seconds\":null,\"executable_path_available\":null},{\"pid\":19665,\"name\":\"triald\",\"cpu_percent\":61.770145416259766,\"memory_bytes\":13615104,\"status\":null,\"run_time_seconds\":null,\"executable_path_available\":null},{\"pid\":86613,\"name\":\"os-agent\",\"cpu_percent\":29.30830955505371,\"memory_bytes\":13697024,\"status\":null,\"run_time_seconds\":null,\"executable_path_available\":null},{\"pid\":465,\"name\":\"cloudd\",\"cpu_percent\":26.798770904541016,\"memory_bytes\":27967488,\"status\":null,\"run_time_seconds\":null,\"executable_path_available\":null},{\"pid\":13982,\"name\":\"Arc\",\"cpu_percent\":17.92097282409668,\"memory_bytes\":468828160,\"status\":null,\"run_time_seconds\":null,\"executable_path_available\":null}],\"issues\":[]}}",
+        "error": null,
+        "duration_ms": 495.32308394555,
+        "truncated": false
+      },
+      {
+        "name": "get_recent_incidents",
+        "arguments": {
+          "limit": 5
+        },
+        "ok": true,
+        "output": "{\"ok\":true,\"tool\":\"get_recent_incidents\",\"schema_version\":1,\"data\":{\"incidents\":[{\"id\":\"inc-000001\",\"kind\":\"low_disk_space\",\"subject\":\"/Volumes/Dia\",\"severity\":\"critical\",\"state\":\"active\",\"started_at\":\"2026-10-23T17:31:11.770672Z\",\"updated_at\":\"2026-10-23T17:31:11.770672Z\",\"last_observed_at\":\"2026-10-23T17:31:11.770672Z\",\"recovered_at\":null,\"summary\":\"Filesystem '/Volumes/Dia' has 0.2% available, at or below the 10.0% threshold\",\"evidence\":{\"derived\":{\"available_threshold_percent\":10.0,\"critical_available_percent\":3.0,\"recovery_available_percent\":15.0},\"kind\":\"low_disk_space\",\"observed\":{\"available_bytes\":2228224,\"available_percent\":0.15478158440575537,\"file_system\":\"hfs\",\"mount_point\":\"/Volumes/Dia\",\"total_bytes\":1439592448,\"used_bytes\":1437364224}}}],\"total_known\":1}}",
+        "error": null,
+        "duration_ms": 0.8662920445203781,
+        "truncated": false
+      }
+    ],
+    "historical_incidents": [],
+    "report": {
+      "summary": "No threshold breach is evident in the collected snapshot.",
+      "evidence": [
+        {
+          "tool": "get_system_metrics",
+          "finding": "CPU utilization was 37.59294509887695%; available memory was 7838547968/17179869184 bytes."
+        },
+        {
+          "tool": "get_disk_usage",
+          "finding": "Disk / had 49270415424 bytes available."
+        },
+        {
+          "tool": "list_top_processes",
+          "finding": "Collected the top processes by the requested sort key."
+        },
+        {
+          "tool": "get_recent_incidents",
+          "finding": "Retrieved 1 recent incident records."
+        }
+      ],
+      "likely_causes": [],
+      "confidence": {
+        "level": "low",
+        "explanation": "The diagnosis is based only on collected observations and configured thresholds; it is not a verified root cause."
+      },
+      "next_checks": [
+        "Collect another snapshot over time.",
+        "Compare the current readings with configured thresholds."
+      ],
+      "data_gaps": [
+        "Only a bounded point-in-time snapshot was collected.",
+        "No root cause is established by the available evidence.",
+        "No historical comparison was available."
+      ]
+    },
+    "score": {
+      "detection_correct": true,
+      "citation_valid": true,
+      "unsupported_claim_count": 0,
+      "contradiction_count": 0,
+      "useful_beyond_deterministic": true,
+      "notes": "Automated scoring checks citation validity and obvious contradictions only. It does not establish factual correctness or real-world usefulness."
+    }
+  },
+  {
+    "path": "llm",
+    "backend": "live",
+    "scenario": "normal_operation",
+    "status": "skipped",
+    "reason": "Ollama is unavailable at http://127.0.0.1:11434. Start it with `ollama serve` and try again."
+  },
+  {
+    "path": "deterministic",
+    "backend": "deterministic",
+    "scenario": "high_cpu_sustained",
+    "question": "Why is CPU usage high?",
+    "duration_ms": 901.9829579629004,
+    "elapsed_ms": 901.9900830462575,
+    "model_invocations": 0,
+    "tool_calls": [
+      {
+        "name": "get_system_metrics",
+        "arguments": {},
+        "ok": true,
+        "output": "{\"ok\":true,\"tool\":\"get_system_metrics\",\"schema_version\":1,\"data\":{\"schema_version\":1,\"collected_at\":\"2026-10-23T17:31:14.450Z\",\"cpu\":{\"overall_percent\":62.80718994140625,\"per_core_percent\":[78.57142639160156,84.0,81.48148345947266,76.92308044433594,51.85185241699219,37.03703689575195,48.14814758300781,44.4444465637207],\"logical_core_count\":8,\"sampling_interval_ms\":200},\"memory\":{\"total_bytes\":17179869184,\"used_bytes\":14192836608,\"available_bytes\":7431028736,\"free_bytes\":68698112,\"used_percent\":82.6131820678711},\"disks\":[{\"mount_point\":\"/\",\"file_system\":\"apfs\",\"total_bytes\":245107195904,\"available_bytes\":49270280256,\"used_bytes\":195836915648,\"used_percent\":79.8984766341591},{\"mount_point\":\"/System/Volumes/Data\",\"file_system\":\"apfs\",\"total_bytes\":245107195904,\"available_bytes\":49270280256,\"used_bytes\":195836915648,\"used_percent\":79.8984766341591},{\"mount_point\":\"/Volumes/boringNotch 2.7.3\",\"file_system\":\"apfs\",\"total_bytes\":34086912,\"available_bytes\":12877824,\"used_bytes\":21209088,\"used_percent\":62.22062004325883},{\"mount_point\":\"/Volumes/Install OrbStack v2.2.3\",\"file_system\":\"apfs\",\"total_bytes\":1126653952,\"available_bytes\":391888896,\"used_bytes\":734765056,\"used_percent\":65.21656935527263},{\"mount_point\":\"/Volumes/Raycast\",\"file_system\":\"hfs\",\"total_bytes\":279969792,\"available_bytes\":35246080,\"used_bytes\":244723712,\"used_percent\":87.41075608614233},{\"mount_point\":\"/Volumes/Raycast 1\",\"file_system\":\"hfs\",\"total_bytes\":279969792,\"available_bytes\":35246080,\"used_bytes\":244723712,\"used_percent\":87.41075608614233},{\"mount_point\":\"/Volumes/Yomu\",\"file_system\":\"hfs\",\"total_bytes\":44040192,\"available_bytes\":25370624,\"used_bytes\":18669568,\"used_percent\":42.392113095238095},{\"mount_point\":\"/Volumes/Dia\",\"file_system\":\"hfs\",\"total_bytes\":1439592448,\"available_bytes\":2228224,\"used_bytes\":1437364224,\"used_percent\":99.84521841559425}],\"processes\":{\"sorted_by\":\"cpu\",\"limit\":0,\"items\":[],\"issues\":[]},\"issues\":[]}}",
+        "error": null,
+        "duration_ms": 331.44208299927413,
+        "truncated": false
+      },
+      {
+        "name": "get_disk_usage",
+        "arguments": {},
+        "ok": true,
+        "output": "{\"ok\":true,\"tool\":\"get_disk_usage\",\"schema_version\":1,\"data\":{\"disks\":[{\"mount_point\":\"/\",\"file_system\":\"apfs\",\"total_bytes\":245107195904,\"available_bytes\":49270276160,\"used_bytes\":195836919744,\"used_percent\":79.89847830526466},{\"mount_point\":\"/System/Volumes/Data\",\"file_system\":\"apfs\",\"total_bytes\":245107195904,\"available_bytes\":49270276160,\"used_bytes\":195836919744,\"used_percent\":79.89847830526466},{\"mount_point\":\"/Volumes/boringNotch 2.7.3\",\"file_system\":\"apfs\",\"total_bytes\":34086912,\"available_bytes\":12877824,\"used_bytes\":21209088,\"used_percent\":62.22062004325883},{\"mount_point\":\"/Volumes/Install OrbStack v2.2.3\",\"file_system\":\"apfs\",\"total_bytes\":1126653952,\"available_bytes\":391888896,\"used_bytes\":734765056,\"used_percent\":65.21656935527263},{\"mount_point\":\"/Volumes/Raycast\",\"file_system\":\"hfs\",\"total_bytes\":279969792,\"available_bytes\":35246080,\"used_bytes\":244723712,\"used_percent\":87.41075608614233},{\"mount_point\":\"/Volumes/Raycast 1\",\"file_system\":\"hfs\",\"total_bytes\":279969792,\"available_bytes\":35246080,\"used_bytes\":244723712,\"used_percent\":87.41075608614233},{\"mount_point\":\"/Volumes/Yomu\",\"file_system\":\"hfs\",\"total_bytes\":44040192,\"available_bytes\":25370624,\"used_bytes\":18669568,\"used_percent\":42.392113095238095},{\"mount_point\":\"/Volumes/Dia\",\"file_system\":\"hfs\",\"total_bytes\":1439592448,\"available_bytes\":2228224,\"used_bytes\":1437364224,\"used_percent\":99.84521841559425}],\"issues\":[]}}",
+        "error": null,
+        "duration_ms": 274.5322498958558,
+        "truncated": false
+      },
+      {
+        "name": "list_top_processes",
+        "arguments": {
+          "sort": "cpu",
+          "limit": 5
+        },
+        "ok": true,
+        "output": "{\"ok\":true,\"tool\":\"list_top_processes\",\"schema_version\":1,\"data\":{\"sorted_by\":\"cpu\",\"limit\":5,\"items\":[{\"pid\":13982,\"name\":\"Arc\",\"cpu_percent\":29.037399291992188,\"memory_bytes\":460947456,\"status\":null,\"run_time_seconds\":null,\"executable_path_available\":null},{\"pid\":84281,\"name\":\"Browser Helper (Renderer)\",\"cpu_percent\":21.366718292236328,\"memory_bytes\":872939520,\"status\":null,\"run_time_seconds\":null,\"executable_path_available\":null},{\"pid\":14018,\"name\":\"Browser Helper\",\"cpu_percent\":16.64006996154785,\"memory_bytes\":142426112,\"status\":null,\"run_time_seconds\":null,\"executable_path_available\":null},{\"pid\":86613,\"name\":\"os-agent\",\"cpu_percent\":15.324694633483887,\"memory_bytes\":14843904,\"status\":null,\"run_time_seconds\":null,\"executable_path_available\":null},{\"pid\":81139,\"name\":\"Browser Helper (Renderer)\",\"cpu_percent\":15.199808120727539,\"memory_bytes\":240877568,\"status\":null,\"run_time_seconds\":null,\"executable_path_available\":null}],\"issues\":[]}}",
+        "error": null,
+        "duration_ms": 295.09120900183916,
+        "truncated": false
+      },
+      {
+        "name": "get_recent_incidents",
+        "arguments": {
+          "limit": 5
+        },
+        "ok": true,
+        "output": "{\"ok\":true,\"tool\":\"get_recent_incidents\",\"schema_version\":1,\"data\":{\"incidents\":[{\"id\":\"inc-000001\",\"kind\":\"low_disk_space\",\"subject\":\"/Volumes/Dia\",\"severity\":\"critical\",\"state\":\"active\",\"started_at\":\"2026-10-23T17:31:11.770672Z\",\"updated_at\":\"2026-10-23T17:31:11.770672Z\",\"last_observed_at\":\"2026-10-23T17:31:11.770672Z\",\"recovered_at\":null,\"summary\":\"Filesystem '/Volumes/Dia' has 0.2% available, at or below the 10.0% threshold\",\"evidence\":{\"derived\":{\"available_threshold_percent\":10.0,\"critical_available_percent\":3.0,\"recovery_available_percent\":15.0},\"kind\":\"low_disk_space\",\"observed\":{\"available_bytes\":2228224,\"available_percent\":0.15478158440575537,\"file_system\":\"hfs\",\"mount_point\":\"/Volumes/Dia\",\"total_bytes\":1439592448,\"used_bytes\":1437364224}}}],\"total_known\":1}}",
+        "error": null,
+        "duration_ms": 0.7502499502152205,
+        "truncated": false
+      }
+    ],
+    "historical_incidents": [],
+    "report": {
+      "summary": "CPU utilization is high in the supplied incident and snapshot.",
+      "evidence": [
+        {
+          "tool": "get_system_metrics",
+          "finding": "CPU utilization was 62.80718994140625%; available memory was 7431028736/17179869184 bytes."
+        },
+        {
+          "tool": "get_disk_usage",
+          "finding": "Disk / had 49270276160 bytes available."
+        },
+        {
+          "tool": "list_top_processes",
+          "finding": "Collected the top processes by the requested sort key."
+        },
+        {
+          "tool": "get_recent_incidents",
+          "finding": "Retrieved 1 recent incident records."
+        }
+      ],
+      "likely_causes": [
+        {
+          "cause": "Sustained CPU saturation is present.",
+          "confidence": "medium",
+          "rationale": "The incident and snapshot report high CPU utilization.",
+          "supporting_evidence": [
+            0
+          ]
+        }
+      ],
+      "confidence": {
+        "level": "medium",
+        "explanation": "The diagnosis is based only on collected observations and configured thresholds; it is not a verified root cause."
+      },
+      "next_checks": [
+        "Collect CPU samples over several minutes to confirm the condition is sustained.",
+        "Compare the current CPU reading with prior incidents before attributing a cause."
+      ],
+      "data_gaps": [
+        "Only a bounded point-in-time snapshot was collected.",
+        "No root cause is established by the available evidence.",
+        "No historical comparison was available."
+      ]
+    },
+    "score": {
+      "detection_correct": true,
+      "citation_valid": true,
+      "unsupported_claim_count": 0,
+      "contradiction_count": 0,
+      "useful_beyond_deterministic": true,
+      "notes": "Automated scoring checks citation validity and obvious contradictions only. It does not establish factual correctness or real-world usefulness."
+    }
+  },
+  {
+    "path": "llm",
+    "backend": "live",
+    "scenario": "high_cpu_sustained",
+    "status": "skipped",
+    "reason": "Ollama is unavailable at http://127.0.0.1:11434. Start it with `ollama serve` and try again."
+  },
+  {
+    "path": "deterministic",
+    "backend": "deterministic",
+    "scenario": "memory_pressure",
+    "question": "Why is available memory low?",
+    "duration_ms": 880.6428749812767,
+    "elapsed_ms": 880.6475419551134,
+    "model_invocations": 0,
+    "tool_calls": [
+      {
+        "name": "get_system_metrics",
+        "arguments": {},
+        "ok": true,
+        "output": "{\"ok\":true,\"tool\":\"get_system_metrics\",\"schema_version\":1,\"data\":{\"schema_version\":1,\"collected_at\":\"2026-10-23T17:31:15.321Z\",\"cpu\":{\"overall_percent\":19.995471954345703,\"per_core_percent\":[21.7391300201416,25.0,27.272727966308594,22.72727394104004,25.0,20.833332061767578,17.39130401611328,0.0],\"logical_core_count\":8,\"sampling_interval_ms\":200},\"memory\":{\"total_bytes\":17179869184,\"used_bytes\":14118125568,\"available_bytes\":7397441536,\"free_bytes\":136658944,\"used_percent\":82.17830657958984},\"disks\":[{\"mount_point\":\"/\",\"file_system\":\"apfs\",\"total_bytes\":245107195904,\"available_bytes\":49270227008,\"used_bytes\":195836968896,\"used_percent\":79.89849835853148},{\"mount_point\":\"/System/Volumes/Data\",\"file_system\":\"apfs\",\"total_bytes\":245107195904,\"available_bytes\":49270227008,\"used_bytes\":195836968896,\"used_percent\":79.89849835853148},{\"mount_point\":\"/Volumes/boringNotch 2.7.3\",\"file_system\":\"apfs\",\"total_bytes\":34086912,\"available_bytes\":12877824,\"used_bytes\":21209088,\"used_percent\":62.22062004325883},{\"mount_point\":\"/Volumes/Install OrbStack v2.2.3\",\"file_system\":\"apfs\",\"total_bytes\":1126653952,\"available_bytes\":391888896,\"used_bytes\":734765056,\"used_percent\":65.21656935527263},{\"mount_point\":\"/Volumes/Raycast\",\"file_system\":\"hfs\",\"total_bytes\":279969792,\"available_bytes\":35246080,\"used_bytes\":244723712,\"used_percent\":87.41075608614233},{\"mount_point\":\"/Volumes/Raycast 1\",\"file_system\":\"hfs\",\"total_bytes\":279969792,\"available_bytes\":35246080,\"used_bytes\":244723712,\"used_percent\":87.41075608614233},{\"mount_point\":\"/Volumes/Yomu\",\"file_system\":\"hfs\",\"total_bytes\":44040192,\"available_bytes\":25370624,\"used_bytes\":18669568,\"used_percent\":42.392113095238095},{\"mount_point\":\"/Volumes/Dia\",\"file_system\":\"hfs\",\"total_bytes\":1439592448,\"available_bytes\":2228224,\"used_bytes\":1437364224,\"used_percent\":99.84521841559425}],\"processes\":{\"sorted_by\":\"cpu\",\"limit\":0,\"items\":[],\"issues\":[]},\"issues\":[]}}",
+        "error": null,
+        "duration_ms": 291.0803329432383,
+        "truncated": false
+      },
+      {
+        "name": "get_disk_usage",
+        "arguments": {},
+        "ok": true,
+        "output": "{\"ok\":true,\"tool\":\"get_disk_usage\",\"schema_version\":1,\"data\":{\"disks\":[{\"mount_point\":\"/\",\"file_system\":\"apfs\",\"total_bytes\":245107195904,\"available_bytes\":49270231104,\"used_bytes\":195836964800,\"used_percent\":79.89849668742592},{\"mount_point\":\"/System/Volumes/Data\",\"file_system\":\"apfs\",\"total_bytes\":245107195904,\"available_bytes\":49270231104,\"used_bytes\":195836964800,\"used_percent\":79.89849668742592},{\"mount_point\":\"/Volumes/boringNotch 2.7.3\",\"file_system\":\"apfs\",\"total_bytes\":34086912,\"available_bytes\":12877824,\"used_bytes\":21209088,\"used_percent\":62.22062004325883},{\"mount_point\":\"/Volumes/Install OrbStack v2.2.3\",\"file_system\":\"apfs\",\"total_bytes\":1126653952,\"available_bytes\":391888896,\"used_bytes\":734765056,\"used_percent\":65.21656935527263},{\"mount_point\":\"/Volumes/Raycast\",\"file_system\":\"hfs\",\"total_bytes\":279969792,\"available_bytes\":35246080,\"used_bytes\":244723712,\"used_percent\":87.41075608614233},{\"mount_point\":\"/Volumes/Raycast 1\",\"file_system\":\"hfs\",\"total_bytes\":279969792,\"available_bytes\":35246080,\"used_bytes\":244723712,\"used_percent\":87.41075608614233},{\"mount_point\":\"/Volumes/Yomu\",\"file_system\":\"hfs\",\"total_bytes\":44040192,\"available_bytes\":25370624,\"used_bytes\":18669568,\"used_percent\":42.392113095238095},{\"mount_point\":\"/Volumes/Dia\",\"file_system\":\"hfs\",\"total_bytes\":1439592448,\"available_bytes\":2228224,\"used_bytes\":1437364224,\"used_percent\":99.84521841559425}],\"issues\":[]}}",
+        "error": null,
+        "duration_ms": 273.4050420112908,
+        "truncated": false
+      },
+      {
+        "name": "list_top_processes",
+        "arguments": {
+          "sort": "cpu",
+          "limit": 5
+        },
+        "ok": true,
+        "output": "{\"ok\":true,\"tool\":\"list_top_processes\",\"schema_version\":1,\"data\":{\"sorted_by\":\"cpu\",\"limit\":5,\"items\":[{\"pid\":86613,\"name\":\"os-agent\",\"cpu_percent\":15.694345474243164,\"memory_bytes\":15122432,\"status\":null,\"run_time_seconds\":null,\"executable_path_available\":null},{\"pid\":30468,\"name\":\"opencode\",\"cpu_percent\":13.217329978942871,\"memory_bytes\":230326272,\"status\":null,\"run_time_seconds\":null,\"executable_path_available\":null},{\"pid\":58273,\"name\":\"Browser Helper (Renderer)\",\"cpu_percent\":7.942687511444092,\"memory_bytes\":109412352,\"status\":null,\"run_time_seconds\":null,\"executable_path_available\":null},{\"pid\":13982,\"name\":\"Arc\",\"cpu_percent\":7.139092445373535,\"memory_bytes\":457195520,\"status\":null,\"run_time_seconds\":null,\"executable_path_available\":null},{\"pid\":69154,\"name\":\"zed\",\"cpu_percent\":5.332931995391846,\"memory_bytes\":90308608,\"status\":null,\"run_time_seconds\":null,\"executable_path_available\":null}],\"issues\":[]}}",
+        "error": null,
+        "duration_ms": 315.30745804775506,
+        "truncated": false
+      },
+      {
+        "name": "get_recent_incidents",
+        "arguments": {
+          "limit": 5
+        },
+        "ok": true,
+        "output": "{\"ok\":true,\"tool\":\"get_recent_incidents\",\"schema_version\":1,\"data\":{\"incidents\":[{\"id\":\"inc-000001\",\"kind\":\"low_disk_space\",\"subject\":\"/Volumes/Dia\",\"severity\":\"critical\",\"state\":\"active\",\"started_at\":\"2026-10-23T17:31:11.770672Z\",\"updated_at\":\"2026-10-23T17:31:11.770672Z\",\"last_observed_at\":\"2026-10-23T17:31:11.770672Z\",\"recovered_at\":null,\"summary\":\"Filesystem '/Volumes/Dia' has 0.2% available, at or below the 10.0% threshold\",\"evidence\":{\"derived\":{\"available_threshold_percent\":10.0,\"critical_available_percent\":3.0,\"recovery_available_percent\":15.0},\"kind\":\"low_disk_space\",\"observed\":{\"available_bytes\":2228224,\"available_percent\":0.15478158440575537,\"file_system\":\"hfs\",\"mount_point\":\"/Volumes/Dia\",\"total_bytes\":1439592448,\"used_bytes\":1437364224}}}],\"total_known\":1}}",
+        "error": null,
+        "duration_ms": 0.7069159764796495,
+        "truncated": false
+      }
+    ],
+    "historical_incidents": [],
+    "report": {
+      "summary": "Available memory is low in the supplied incident and snapshot.",
+      "evidence": [
+        {
+          "tool": "get_system_metrics",
+          "finding": "CPU utilization was 19.995471954345703%; available memory was 7397441536/17179869184 bytes."
+        },
+        {
+          "tool": "get_disk_usage",
+          "finding": "Disk / had 49270231104 bytes available."
+        },
+        {
+          "tool": "list_top_processes",
+          "finding": "Collected the top processes by the requested sort key."
+        },
+        {
+          "tool": "get_recent_incidents",
+          "finding": "Retrieved 1 recent incident records."
+        }
+      ],
+      "likely_causes": [
+        {
+          "cause": "Memory availability is below the configured threshold.",
+          "confidence": "medium",
+          "rationale": "The incident and snapshot report low available memory.",
+          "supporting_evidence": [
+            0
+          ]
+        }
+      ],
+      "confidence": {
+        "level": "medium",
+        "explanation": "The diagnosis is based only on collected observations and configured thresholds; it is not a verified root cause."
+      },
+      "next_checks": [
+        "Collect repeated memory samples to distinguish a transient spike from sustained pressure.",
+        "Inspect the largest resident processes if process data becomes available."
+      ],
+      "data_gaps": [
+        "Only a bounded point-in-time snapshot was collected.",
+        "No root cause is established by the available evidence.",
+        "No historical comparison was available."
+      ]
+    },
+    "score": {
+      "detection_correct": true,
+      "citation_valid": true,
+      "unsupported_claim_count": 0,
+      "contradiction_count": 0,
+      "useful_beyond_deterministic": true,
+      "notes": "Automated scoring checks citation validity and obvious contradictions only. It does not establish factual correctness or real-world usefulness."
+    }
+  },
+  {
+    "path": "llm",
+    "backend": "live",
+    "scenario": "memory_pressure",
+    "status": "skipped",
+    "reason": "Ollama is unavailable at http://127.0.0.1:11434. Start it with `ollama serve` and try again."
+  },
+  {
+    "path": "deterministic",
+    "backend": "deterministic",
+    "scenario": "low_disk_space",
+    "question": "Why is disk space low?",
+    "duration_ms": 877.5747499894351,
+    "elapsed_ms": 877.5787090416998,
+    "model_invocations": 0,
+    "tool_calls": [
+      {
+        "name": "get_system_metrics",
+        "arguments": {},
+        "ok": true,
+        "output": "{\"ok\":true,\"tool\":\"get_system_metrics\",\"schema_version\":1,\"data\":{\"schema_version\":1,\"collected_at\":\"2026-10-23T17:31:16.215Z\",\"cpu\":{\"overall_percent\":19.025856018066406,\"per_core_percent\":[45.833335876464844,36.3636360168457,22.72727394104004,21.7391300201416,8.69565200805664,12.5,4.34782600402832,0.0],\"logical_core_count\":8,\"sampling_interval_ms\":200},\"memory\":{\"total_bytes\":17179869184,\"used_bytes\":14148550656,\"available_bytes\":7462060032,\"free_bytes\":63488000,\"used_percent\":82.35540390014648},\"disks\":[{\"mount_point\":\"/\",\"file_system\":\"apfs\",\"total_bytes\":245107195904,\"available_bytes\":49270276160,\"used_bytes\":195836919744,\"used_percent\":79.89847830526466},{\"mount_point\":\"/System/Volumes/Data\",\"file_system\":\"apfs\",\"total_bytes\":245107195904,\"available_bytes\":49270276160,\"used_bytes\":195836919744,\"used_percent\":79.89847830526466},{\"mount_point\":\"/Volumes/boringNotch 2.7.3\",\"file_system\":\"apfs\",\"total_bytes\":34086912,\"available_bytes\":12877824,\"used_bytes\":21209088,\"used_percent\":62.22062004325883},{\"mount_point\":\"/Volumes/Install OrbStack v2.2.3\",\"file_system\":\"apfs\",\"total_bytes\":1126653952,\"available_bytes\":391888896,\"used_bytes\":734765056,\"used_percent\":65.21656935527263},{\"mount_point\":\"/Volumes/Raycast\",\"file_system\":\"hfs\",\"total_bytes\":279969792,\"available_bytes\":35246080,\"used_bytes\":244723712,\"used_percent\":87.41075608614233},{\"mount_point\":\"/Volumes/Raycast 1\",\"file_system\":\"hfs\",\"total_bytes\":279969792,\"available_bytes\":35246080,\"used_bytes\":244723712,\"used_percent\":87.41075608614233},{\"mount_point\":\"/Volumes/Yomu\",\"file_system\":\"hfs\",\"total_bytes\":44040192,\"available_bytes\":25370624,\"used_bytes\":18669568,\"used_percent\":42.392113095238095},{\"mount_point\":\"/Volumes/Dia\",\"file_system\":\"hfs\",\"total_bytes\":1439592448,\"available_bytes\":2228224,\"used_bytes\":1437364224,\"used_percent\":99.84521841559425}],\"processes\":{\"sorted_by\":\"cpu\",\"limit\":0,\"items\":[],\"issues\":[]},\"issues\":[]}}",
+        "error": null,
+        "duration_ms": 296.0197079228237,
+        "truncated": false
+      },
+      {
+        "name": "get_disk_usage",
+        "arguments": {},
+        "ok": true,
+        "output": "{\"ok\":true,\"tool\":\"get_disk_usage\",\"schema_version\":1,\"data\":{\"disks\":[{\"mount_point\":\"/\",\"file_system\":\"apfs\",\"total_bytes\":245107195904,\"available_bytes\":49270276160,\"used_bytes\":195836919744,\"used_percent\":79.89847830526466},{\"mount_point\":\"/System/Volumes/Data\",\"file_system\":\"apfs\",\"total_bytes\":245107195904,\"available_bytes\":49270276160,\"used_bytes\":195836919744,\"used_percent\":79.89847830526466},{\"mount_point\":\"/Volumes/boringNotch 2.7.3\",\"file_system\":\"apfs\",\"total_bytes\":34086912,\"available_bytes\":12877824,\"used_bytes\":21209088,\"used_percent\":62.22062004325883},{\"mount_point\":\"/Volumes/Install OrbStack v2.2.3\",\"file_system\":\"apfs\",\"total_bytes\":1126653952,\"available_bytes\":391888896,\"used_bytes\":734765056,\"used_percent\":65.21656935527263},{\"mount_point\":\"/Volumes/Raycast\",\"file_system\":\"hfs\",\"total_bytes\":279969792,\"available_bytes\":35246080,\"used_bytes\":244723712,\"used_percent\":87.41075608614233},{\"mount_point\":\"/Volumes/Raycast 1\",\"file_system\":\"hfs\",\"total_bytes\":279969792,\"available_bytes\":35246080,\"used_bytes\":244723712,\"used_percent\":87.41075608614233},{\"mount_point\":\"/Volumes/Yomu\",\"file_system\":\"hfs\",\"total_bytes\":44040192,\"available_bytes\":25370624,\"used_bytes\":18669568,\"used_percent\":42.392113095238095},{\"mount_point\":\"/Volumes/Dia\",\"file_system\":\"hfs\",\"total_bytes\":1439592448,\"available_bytes\":2228224,\"used_bytes\":1437364224,\"used_percent\":99.84521841559425}],\"issues\":[]}}",
+        "error": null,
+        "duration_ms": 295.2491670148447,
+        "truncated": false
+      },
+      {
+        "name": "list_top_processes",
+        "arguments": {
+          "sort": "cpu",
+          "limit": 5
+        },
+        "ok": true,
+        "output": "{\"ok\":true,\"tool\":\"list_top_processes\",\"schema_version\":1,\"data\":{\"sorted_by\":\"cpu\",\"limit\":5,\"items\":[{\"pid\":86613,\"name\":\"os-agent\",\"cpu_percent\":32.737449645996094,\"memory_bytes\":15876096,\"status\":null,\"run_time_seconds\":null,\"executable_path_available\":null},{\"pid\":30468,\"name\":\"opencode\",\"cpu_percent\":6.660101890563965,\"memory_bytes\":223576064,\"status\":null,\"run_time_seconds\":null,\"executable_path_available\":null},{\"pid\":58273,\"name\":\"Browser Helper (Renderer)\",\"cpu_percent\":5.400493144989014,\"memory_bytes\":109576192,\"status\":null,\"run_time_seconds\":null,\"executable_path_available\":null},{\"pid\":69154,\"name\":\"zed\",\"cpu_percent\":4.6536054611206055,\"memory_bytes\":90095616,\"status\":null,\"run_time_seconds\":null,\"executable_path_available\":null},{\"pid\":98556,\"name\":\"Browser Helper (Renderer)\",\"cpu_percent\":4.348095417022705,\"memory_bytes\":134381568,\"status\":null,\"run_time_seconds\":null,\"executable_path_available\":null}],\"issues\":[]}}",
+        "error": null,
+        "duration_ms": 285.5011250358075,
+        "truncated": false
+      },
+      {
+        "name": "get_recent_incidents",
+        "arguments": {
+          "limit": 5
+        },
+        "ok": true,
+        "output": "{\"ok\":true,\"tool\":\"get_recent_incidents\",\"schema_version\":1,\"data\":{\"incidents\":[{\"id\":\"inc-000001\",\"kind\":\"low_disk_space\",\"subject\":\"/Volumes/Dia\",\"severity\":\"critical\",\"state\":\"active\",\"started_at\":\"2026-10-23T17:31:11.770672Z\",\"updated_at\":\"2026-10-23T17:31:16.725657Z\",\"last_observed_at\":\"2026-10-23T17:31:16.725657Z\",\"recovered_at\":null,\"summary\":\"Filesystem '/Volumes/Dia' has 0.2% available, at or below the 10.0% threshold\",\"evidence\":{\"derived\":{\"available_threshold_percent\":10.0,\"critical_available_percent\":3.0,\"recovery_available_percent\":15.0},\"kind\":\"low_disk_space\",\"observed\":{\"available_bytes\":2228224,\"available_percent\":0.15478158440575537,\"file_system\":\"hfs\",\"mount_point\":\"/Volumes/Dia\",\"total_bytes\":1439592448,\"used_bytes\":1437364224}}}],\"total_known\":1}}",
+        "error": null,
+        "duration_ms": 0.6682079983875155,
+        "truncated": false
+      }
+    ],
+    "historical_incidents": [],
+    "report": {
+      "summary": "Available disk space is low for the affected mount.",
+      "evidence": [
+        {
+          "tool": "get_system_metrics",
+          "finding": "CPU utilization was 19.025856018066406%; available memory was 7462060032/17179869184 bytes."
+        },
+        {
+          "tool": "get_disk_usage",
+          "finding": "Disk / had 49270276160 bytes available."
+        },
+        {
+          "tool": "list_top_processes",
+          "finding": "Collected the top processes by the requested sort key."
+        },
+        {
+          "tool": "get_recent_incidents",
+          "finding": "Retrieved 1 recent incident records."
+        }
+      ],
+      "likely_causes": [
+        {
+          "cause": "Disk capacity is below the configured threshold.",
+          "confidence": "medium",
+          "rationale": "The incident and disk usage report low available space.",
+          "supporting_evidence": [
+            1
+          ]
+        }
+      ],
+      "confidence": {
+        "level": "medium",
+        "explanation": "The diagnosis is based only on collected observations and configured thresholds; it is not a verified root cause."
+      },
+      "next_checks": [
+        "Identify large files or growth on the affected mount using read-only inspection.",
+        "Track available space over time before deleting or moving data."
+      ],
+      "data_gaps": [
+        "Only a bounded point-in-time snapshot was collected.",
+        "No root cause is established by the available evidence.",
+        "No historical comparison was available."
+      ]
+    },
+    "score": {
+      "detection_correct": true,
+      "citation_valid": true,
+      "unsupported_claim_count": 0,
+      "contradiction_count": 0,
+      "useful_beyond_deterministic": true,
+      "notes": "Automated scoring checks citation validity and obvious contradictions only. It does not establish factual correctness or real-world usefulness."
+    }
+  },
+  {
+    "path": "llm",
+    "backend": "live",
+    "scenario": "low_disk_space",
+    "status": "skipped",
+    "reason": "Ollama is unavailable at http://127.0.0.1:11434. Start it with `ollama serve` and try again."
+  }
+]

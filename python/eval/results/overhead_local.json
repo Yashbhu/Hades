@@ -1,0 +1,60 @@
+{
+  "trials": 2,
+  "duration_seconds": 2.0,
+  "iterations": 3,
+  "monitor_only": [
+    {
+      "status": "completed",
+      "wall_seconds": 0.5106442499672994,
+      "exit_code": 2,
+      "cpu_percent_median": 0.0,
+      "cpu_percent_max": 0.0,
+      "rss_bytes_median": 2588672,
+      "rss_bytes_max": 2588672,
+      "samples": 1
+    },
+    {
+      "status": "completed",
+      "wall_seconds": 0.5238347499398515,
+      "exit_code": 2,
+      "cpu_percent_median": 0.0,
+      "cpu_percent_max": 0.0,
+      "rss_bytes_median": 0,
+      "rss_bytes_max": 0,
+      "samples": 1
+    }
+  ],
+  "deterministic": [
+    {
+      "status": "failed",
+      "exit_code": 1,
+      "stderr": "File \"<string>\", line 6\n    from pathlib import Path\n    ^^^^\nIndentationError: expected an indented block after 'for' statement on line 4",
+      "wall_seconds": 0.5741582909831777,
+      "worker_seconds": null,
+      "iterations": 3,
+      "cpu_percent_median": 0.0,
+      "cpu_percent_max": 0.0,
+      "rss_bytes_median": 1966080,
+      "rss_bytes_max": 1966080,
+      "ollama_samples": [],
+      "samples": 1
+    },
+    {
+      "status": "failed",
+      "exit_code": 1,
+      "stderr": "File \"<string>\", line 6\n    from pathlib import Path\n    ^^^^\nIndentationError: expected an indented block after 'for' statement on line 4",
+      "wall_seconds": 0.5443160829599947,
+      "worker_seconds": null,
+      "iterations": 3,
+      "cpu_percent_median": 0.8,
+      "cpu_percent_max": 0.8,
+      "rss_bytes_median": 1605632,
+      "rss_bytes_max": 1605632,
+      "ollama_samples": [],
+      "samples": 1
+    }
+  ],
+  "llm": [],
+  "workload": null,
+  "temperature_power": "unavailable: requires root-level powermetrics or platform-specific tooling"
+}
