@@ -4,6 +4,7 @@ import os
 import signal
 import socket
 import subprocess
+import tempfile
 import time
 import unittest
 from pathlib import Path
@@ -12,6 +13,7 @@ from hades_agent.agent import DiagnosticAgent
 from hades_agent.config import AgentConfig
 from hades_agent.model import OllamaModelProvider
 from hades_agent.tools import DiagnosticToolbox
+from hades_agent.workflow import InvestigationWorkflow
 from hades_client import AgentConnectionError, HadesClient
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -92,6 +94,29 @@ class OptionalOllamaIntegrationTests(unittest.TestCase):
         self.assertTrue(result.report.summary)
         self.assertGreaterEqual(result.iterations, 1)
         self.assertGreaterEqual(len(result.tool_calls), 1)
+
+    def test_real_graph_workflow_checkpoints_and_reports(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            config = self.config.merged(
+                checkpoint_db=Path(directory) / "investigations.sqlite",
+                max_steps=4,
+            )
+            toolbox = DiagnosticToolbox.from_client(self.client)
+            model = OllamaModelProvider(config).create_chat_model()
+            workflow = InvestigationWorkflow(toolbox, model, config)
+            try:
+                outcome = workflow.start("What are the current CPU and memory levels?")
+            finally:
+                workflow.close()
+
+            self.assertIsNotNone(outcome.report)
+            self.assertGreaterEqual(outcome.step_count, 1)
+            self.assertIn(
+                outcome.termination_status,
+                {"completed", "inconclusive", "budget_exhausted", "step_limit"},
+            )
+            saved = InvestigationWorkflow.status(config, outcome.investigation_id)
+            self.assertEqual(saved.termination_status, outcome.termination_status)
 
 
 if __name__ == "__main__":

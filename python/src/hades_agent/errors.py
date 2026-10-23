@@ -49,3 +49,19 @@ class IncidentInputError(HadesAgentError):
 
 class InvestigationInputError(HadesAgentError):
     """The question or incident supplied to the agent is invalid."""
+
+
+class CheckpointError(HadesAgentError):
+    """A local investigation checkpoint could not be read or written safely."""
+
+
+class CheckpointIncompatibleError(CheckpointError):
+    """A checkpoint was written with an unsupported state schema version."""
+
+
+class InvestigationNotFoundError(CheckpointError):
+    """No checkpoint exists for the requested investigation."""
+
+
+class InvestigationExistsError(CheckpointError):
+    """An investigation with the requested ID already exists."""

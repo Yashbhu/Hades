@@ -3,10 +3,14 @@
 from .agent import DiagnosticAgent
 from .config import DEFAULT_MODEL, DEFAULT_OLLAMA_URL, AgentConfig
 from .errors import (
+    CheckpointError,
+    CheckpointIncompatibleError,
     ConfigurationError,
     HadesAgentError,
     IncidentInputError,
+    InvestigationExistsError,
     InvestigationInputError,
+    InvestigationNotFoundError,
     ModelInferenceError,
     ModelNotFoundError,
     ModelUnavailableError,
@@ -27,9 +31,19 @@ from .models import (
     ToolExecution,
 )
 from .tools import EXPECTED_TOOLS, DiagnosticToolbox
+from .workflow import (
+    CheckpointStore,
+    InvestigationState,
+    InvestigationWorkflow,
+    TerminationStatus,
+    WorkflowOutcome,
+)
 
 __all__ = [
     "AgentConfig",
+    "CheckpointError",
+    "CheckpointIncompatibleError",
+    "CheckpointStore",
     "ConfidenceAssessment",
     "ConfidenceLevel",
     "ConfigurationError",
@@ -44,7 +58,11 @@ __all__ = [
     "Hypothesis",
     "IncidentContext",
     "IncidentInputError",
+    "InvestigationExistsError",
     "InvestigationInputError",
+    "InvestigationNotFoundError",
+    "InvestigationState",
+    "InvestigationWorkflow",
     "InvestigationResult",
     "ModelInferenceError",
     "ModelNotFoundError",
@@ -55,4 +73,6 @@ __all__ = [
     "ToolCatalogError",
     "ToolExecution",
     "ToolServiceError",
+    "TerminationStatus",
+    "WorkflowOutcome",
 ]

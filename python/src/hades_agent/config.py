@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import urllib.parse
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
@@ -54,6 +55,12 @@ class AgentConfig(BaseModel):
     max_iterations: int = Field(default=6, ge=1, le=16)
     max_question_chars: int = Field(default=8_000, ge=256, le=100_000)
     max_tool_result_chars: int = Field(default=4_096, ge=1_024, le=100_000)
+    max_context_chars: int = Field(default=24_000, ge=4_096, le=131_072)
+    max_steps: int = Field(default=12, ge=1, le=64)
+    max_consecutive_tool_failures: int = Field(default=3, ge=1, le=10)
+    checkpoint_db: Path = Field(
+        default_factory=lambda: Path.home() / ".hades" / "investigations.sqlite"
+    )
     num_ctx: int = Field(default=16384, ge=2048, le=131_072)
     num_predict: int = Field(default=1024, ge=128, le=8192)
     temperature: float = Field(default=0.0, ge=0.0, le=1.0)
@@ -84,6 +91,12 @@ class AgentConfig(BaseModel):
             "max_iterations": ("HADES_MAX_ITERATIONS",),
             "max_question_chars": ("HADES_MAX_QUESTION_CHARS",),
             "max_tool_result_chars": ("HADES_MAX_TOOL_RESULT_CHARS",),
+            "max_context_chars": ("HADES_MAX_CONTEXT_CHARS",),
+            "max_steps": ("HADES_MAX_STEPS",),
+            "max_consecutive_tool_failures": (
+                "HADES_MAX_CONSECUTIVE_TOOL_FAILURES",
+            ),
+            "checkpoint_db": ("HADES_CHECKPOINT_DB",),
             "num_ctx": ("HADES_NUM_CTX",),
             "num_predict": ("HADES_NUM_PREDICT",),
             "temperature": ("HADES_TEMPERATURE",),

@@ -189,6 +189,34 @@ class DiagnosticAgent:
             },
         )
 
+    def bind_tools(self) -> Any:
+        """Return the local model bound to the exact tool allowlist."""
+        return self._bind_tools()
+
+    def invoke_model(self, model: Any, messages: Sequence[Any], stage: str) -> Any:
+        """Invoke a local model and translate failures into a stable error."""
+        return self._invoke_model(model, messages, stage)
+
+    def generate_report(
+        self,
+        *,
+        question: str,
+        incident: IncidentContext | None,
+        executions: Sequence[ToolExecution],
+        final_answer: str,
+        budget_exhausted: bool,
+        iteration_limit_reached: bool,
+    ) -> DiagnosticReport:
+        """Generate and validate a report from an investigation transcript."""
+        return self._generate_report(
+            question=question,
+            incident=incident,
+            executions=executions,
+            final_answer=final_answer,
+            budget_exhausted=budget_exhausted,
+            iteration_limit_reached=iteration_limit_reached,
+        )
+
     def _bind_tools(self) -> Any:
         if self._bound_model is not None:
             return self._bound_model

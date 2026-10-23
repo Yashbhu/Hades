@@ -203,6 +203,25 @@ class DiagnosticToolbox:
         """Return the Pydantic arguments model for tests and introspection."""
         return self._binding(name).args_model
 
+    def validate_call(
+        self, name: str, arguments: Mapping[str, Any] | None
+    ) -> dict[str, Any]:
+        """Validate an allowlisted tool call without dispatching it.
+
+        This is the application-code safety boundary used by the stateful
+        workflow before it executes a model-proposed action.
+        """
+        binding = self._binding(name)
+        if arguments is None:
+            arguments = {}
+        if not isinstance(arguments, Mapping):
+            raise ToolArgumentError("tool arguments must be a JSON object")
+        try:
+            validated = binding.args_model.model_validate(dict(arguments))
+        except ValidationError as error:
+            raise ToolArgumentError(f"invalid arguments for {name}: {error}") from error
+        return validated.model_dump()
+
     def execute(self, name: str, arguments: Mapping[str, Any] | None) -> ToolExecution:
         """Validate and execute one tool call.
 
@@ -212,17 +231,8 @@ class DiagnosticToolbox:
         """
         binding = self._binding(name)
         started = time.monotonic()
-        if arguments is None:
-            arguments = {}
-        if not isinstance(arguments, Mapping):
-            raise ToolArgumentError("tool arguments must be a JSON object")
-
-        try:
-            validated = binding.args_model.model_validate(dict(arguments))
-        except ValidationError as error:
-            raise ToolArgumentError(f"invalid arguments for {name}: {error}") from error
-
-        normalized = validated.model_dump()
+        normalized = self.validate_call(name, arguments)
+        validated = binding.args_model.model_validate(normalized)
         try:
             result = binding.invoke(validated)
         except RemoteToolError as error:

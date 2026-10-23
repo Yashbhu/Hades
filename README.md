@@ -9,10 +9,17 @@ Hades is built in milestones. The current repository implements:
 | **M1** | Complete | Rust CPU, memory, disk, and process collection; `os-agent status` and `processes` |
 | **M2** | Complete | Background monitoring, bounded rolling history, deterministic anomaly detection, incident lifecycle, JSON Lines events, `os-agent monitor` |
 | **M3** | Complete | Loopback JSON HTTP bridge exposing five registered read-only diagnostic tools, plus a typed Python client |
-| **M4** | Implemented | Local Ollama + LangChain diagnostic agent with bounded tool calling and Pydantic-validated reports; the optional live Ollama test requires a local model |
+| **M4** | Complete | Local Ollama + LangChain diagnostic agent with bounded tool calling and Pydantic-validated reports; the optional live Ollama test requires a local model |
+| **M5** | Complete | LangGraph investigation workflow with typed state, explicit transitions, SQLite checkpoints, resumable investigations, and deterministic evidence/termination handling |
 
-There is no LangGraph, long-term memory, RAG, vector database, fine-tuning,
-remediation, web dashboard, or remote LLM provider in this repository.
+There is no long-term memory, RAG, vector database, fine-tuning, remediation, web
+dashboard, or remote LLM provider in this repository. M5 deliberately does not add
+semantic memory or a multi-agent orchestration framework.
+
+> **Implementation note:** the M4 code in this repository uses Ollama
+> (`ChatOllama`) for local inference, not a direct `llama.cpp` binding. M5 keeps
+> that working inference layer and adds LangGraph around it. No hosted provider or
+> remote fallback is introduced.
 
 ## Design principles
 
@@ -23,13 +30,17 @@ remediation, web dashboard, or remote LLM provider in this repository.
   registered. There is no shell tool, command endpoint, executable-path input,
   or filesystem mutation.
 - **Facts are separate from hypotheses.** M2 incidents contain measurements and
-  derived values. M4 reports keep tool observations separate from uncertain
-  causes.
+  derived values. M4/M5 reports and workflow state keep tool observations
+  separate from uncertain causes.
 - **Missing data is not zero.** Unavailable metrics are `null` or omitted, with
   an issue entry. Monitoring and tools never invent values.
-- **Bounded state and bounded work.** History and incidents are capped; the
-  agent has limits on model turns and tool calls; the bridge limits request
-  bodies and result sizes.
+- **Bounded state and bounded work.** History, incidents, graph steps, tool
+  calls, evidence summaries, checkpoint transitions, and prompt context are
+  capped; the bridge limits request bodies and result sizes.
+- **Durable but local.** M5 checkpoints and its write-ahead tool journal live in
+  a local SQLite database by default. A resumed investigation reuses completed
+  read-only results; an uncertain in-flight call is repeated only as an explicit
+  fresh read-only check.
 - **Deterministic detection.** Anomaly detection is ordinary Rust code, not an
   LLM.
 
@@ -55,8 +66,8 @@ cargo build --release
 
 ### 2. Install the Python packages
 
-The Python package contains both the M3 client (`hades_client`) and the M4 agent
-(`hades_agent`).
+The Python package contains the M3 client (`hades_client`) and the
+M4/M5 agent (`hades_agent`).
 
 ```sh
 cd python
@@ -121,8 +132,11 @@ Rust CLI commands remain unchanged.
 │                                                                         │
 │  Python: hades_agent                                                    │
 │  ├── DiagnosticToolbox: allowlist + Pydantic argument validation        │
-│  ├── LangChain ChatOllama: tool selection and report generation         │
-│  └── bounded investigation loop + Pydantic DiagnosticReport             │
+│  ├── LangGraph: initialize → plan → validate → execute → assess         │
+│  │              → finalize/terminate, with bounded loops                 │
+│  ├── LangChain ChatOllama: local planning and report generation         │
+│  ├── SQLite checkpoints + read-only tool journal                        │
+│  └── Pydantic DiagnosticReport and workflow outcome models              │
 │                                                                         │
 │  Ollama (127.0.0.1:11434) ──► local tool-calling model                  │
 └─────────────────────────────────────────────────────────────────────────┘
@@ -163,9 +177,10 @@ python/src/
     ├── config.py        Environment/CLI configuration, loopback enforcement
     ├── tools.py         Exact five-tool allowlist and argument schemas
     ├── model.py         Ollama preflight and ChatOllama construction
-    ├── agent.py         Bounded tool-calling investigation loop
+    ├── agent.py         M4 bounded loop, prompts, report validation
+    ├── workflow.py      M5 LangGraph state, transitions, SQLite checkpoints
     ├── models.py        Pydantic incident/report/trace models
-    ├── cli.py           `hades-agent` CLI
+    ├── cli.py           `hades-agent` CLI (ask/incident/resume/status)
     └── errors.py        Actionable error types
 ```
 
@@ -437,7 +452,11 @@ Ollama URL is rejected.
 | `HADES_MODEL_TIMEOUT` | `120` | Model request timeout, seconds |
 | `HADES_TOOL_TIMEOUT` | `10` | Tool request timeout, seconds |
 | `HADES_MAX_TOOL_CALLS` | `8` | Tool-call budget per investigation (1–32) |
-| `HADES_MAX_ITERATIONS` | `6` | Model turns per investigation (1–16) |
+| `HADES_MAX_ITERATIONS` | `6` | Legacy M4 model turns per investigation (1–16) |
+| `HADES_MAX_STEPS` | `12` | M5 graph planning steps per investigation (1–64) |
+| `HADES_MAX_CONSECUTIVE_TOOL_FAILURES` | `3` | Stop after this many consecutive rejected/failed actions (1–10) |
+| `HADES_CHECKPOINT_DB` | `~/.hades/investigations.sqlite` | Local SQLite checkpoint and tool-journal path |
+| `HADES_MAX_CONTEXT_CHARS` | `24000` | Bounded planner context (4,096–131,072 characters) |
 | `HADES_NUM_CTX` | `16384` | Ollama context window |
 | `HADES_NUM_PREDICT` | `1024` | Maximum generated tokens per response |
 | `HADES_TEMPERATURE` | `0.0` | Sampling temperature |
@@ -459,9 +478,11 @@ on) override environment values and are validated again.
    returned to the model as untrusted data. Tool results are truncated at a
    bounded size (4,096 characters by default) with an explicit marker; the trace
    records whether truncation occurred.
-6. The loop stops when the model returns no tool call, the tool-call budget is
-   exhausted, the iteration limit is reached, or a transport/protocol failure is
-   terminal. There is no LangGraph.
+6. The original M4 loop stops when the model returns no tool call, the
+   tool-call budget is exhausted, the iteration limit is reached, or a
+   transport/protocol failure is terminal. It remains available as
+   `DiagnosticAgent` for callers and tests; the CLI uses the M5 LangGraph
+   workflow, which reuses the same prompts and report validation.
 7. A second structured-output call produces a Pydantic-validated
    `DiagnosticReport`. Evidence citations are checked against successful tool
    calls; invalid reports get one repair attempt.
@@ -550,6 +571,167 @@ JSON output contains `question`, `incident`, `report`, `tool_calls`, `model`,
   data it reads. Reports are advisory, not authoritative, and never trigger
   remediation.
 
+## M5 stateful investigation workflow
+
+M5 adds an explicit LangGraph workflow around the existing local inference and
+read-only tools. It is intentionally a small graph, not a multi-agent system.
+The M4 `DiagnosticAgent` remains available; the graph reuses its tool-binding,
+prompt, and report-validation code.
+
+### Workflow state
+
+The checkpointed `InvestigationState` contains only the bounded information
+needed to resume:
+
+- a generated investigation ID and execution ID;
+- the original question and optional incident context;
+- the current stage;
+- planning-step and tool-call counts;
+- associated incident IDs;
+- successful evidence records (tool, validated arguments, bounded result
+  summary, collection time, investigation/incident IDs, call ID, duration, and
+  whether a result came from a fresh check);
+- structured tool/action errors with codes and whether a retry is plausible;
+- current hypotheses, missing-evidence notes, detected contradictory repeated
+  observations, and suggested next checks;
+- the validated final report, if one exists;
+- stop reason, termination status, and termination reason;
+- bounded transition history and completed call IDs.
+
+Tool outputs are summaries, not a full conversation history or a second copy of
+every system snapshot. Model-generated hypotheses are stored separately from
+evidence. The report schema is unchanged from M4.
+
+### Graph and safety boundaries
+
+```text
+START
+  │
+initialize
+  │
+plan ───────────────► terminate
+  │  (valid tool action)   (model/state error)
+validate ──► execute ──► assess
+  │                         │
+  └──── invalid/failed ◄────┘
+          action               │
+                               ├──► plan (more evidence)
+                               └──► finalize ──► terminate ──► END
+```
+
+- `plan` asks the local model for at most one next read-only tool call. If the
+  model replies without a tool call, the graph finalizes.
+- `validate` checks the tool name against the exact five-tool allowlist and
+  re-validates arguments with the existing Pydantic schemas. No request is sent
+  for an unknown tool or invalid arguments.
+- `execute` is ordinary application code. It never delegates execution to the
+  model, never constructs shell commands, and never exposes an unregistered
+  tool.
+- `assess` records evidence, failures, missing data, and repeated-observation
+  disagreements. It does not treat model confidence as a calibrated
+  probability.
+- `finalize` calls the M4 structured report generator. Evidence citations must
+  reference successful tool calls; hypotheses require observations. If the
+  report cannot be validated, the graph returns an explicit inconclusive report
+  with low confidence and data gaps.
+- `terminate` always writes a final status and report, including for model or
+  service failures.
+
+The graph has hard limits on planning steps and tool-call attempts. A
+`recursion_limit` is also set as a backstop. All edges and termination
+conditions are explicit in `workflow.py`.
+
+### Checkpointing and recovery
+
+Checkpoints use `langgraph-checkpoint-sqlite` with a local SQLite database. The
+LangGraph thread ID is the investigation ID; the state also carries an execution
+ID and each outcome includes the latest checkpoint ID.
+
+- Checkpoints are written after completed graph nodes.
+- `hades-agent resume <id>` resumes from the latest checkpoint.
+- Completed graph runs are not re-executed by `resume`.
+- A separate SQLite write-ahead journal records each tool call as `started`,
+  `completed`, or `failed`.
+- If the process dies after a tool result is journaled but before the graph
+  checkpoint, the journaled completed result is reused.
+- If the journal shows an uncertain in-flight call, the graph performs a fresh
+  read-only check and marks the evidence record `fresh_check`. It never assumes
+  the previous call completed, and it never performs a mutating operation.
+- A state schema version is stored in every checkpoint. Missing or unsupported
+  versions, malformed reports, and unreadable SQLite files produce actionable
+  `CheckpointError`/`CheckpointIncompatibleError` messages rather than an unsafe
+  resume.
+- The checkpoint directory is created with user-only permissions where the
+  platform allows it. No checkpoint is sent over the network.
+
+This milestone does not implement long-term semantic memory or RAG. Checkpoints
+are per-investigation recovery state.
+
+### CLI
+
+The existing CLI is extended rather than replaced:
+
+```sh
+# Start with a generated ID; the ID is printed in text and JSON output.
+hades-agent ask "Why is memory usage high?"
+
+# Use a stable ID and a custom local checkpoint database.
+hades-agent ask "Why is CPU high?" --investigation-id inv-42 \
+  --checkpoint-db ~/.hades/investigations.sqlite
+
+# Investigate the newest incident, a file, or a retained incident ID.
+hades-agent incident --latest
+hades-agent incident --file /tmp/incident.json
+hades-agent incident --id inc-123
+
+# Inspect the saved stage without loading a model or the Rust service.
+hades-agent status inv-42
+hades-agent status inv-42 --json
+
+# Resume after Ctrl+C, a crash, or a stop before finalization.
+hades-agent resume inv-42
+
+# Machine-readable output.
+hades-agent ask "Check disk space" --json
+```
+
+Text output starts with the investigation ID, stage, termination status, and
+reason, followed by the same evidence/hypothesis/confidence sections as M4.
+JSON output includes the M5 fields (`investigation_id`, `execution_id`, `stage`,
+`step_count`, `tool_call_count`, `evidence`, `tool_errors`, `hypotheses`,
+`missing_evidence`, `contradictions`, `next_checks`, `termination_status`,
+`termination_reason`, `checkpoint_id`, `next_nodes`, and `resumable`) plus the
+M4-compatible `report`, `model`, `limits`, `iterations`, `tool_calls`,
+`budget_exhausted`, and `iteration_limit_reached` keys.
+
+Exit codes: `0` for a completed or honestly inconclusive investigation, `2` for
+a configuration/checkpoint error or an unrecoverable model/service failure, and
+`130` for an interrupt. A model inference failure still produces a low-confidence
+inconclusive report instead of fabricated evidence.
+
+### Security and trust boundaries
+
+- Only the five registered read-only tools can be called. The model receives
+  their schemas, but `DiagnosticToolbox.validate_call` and `execute` enforce the
+  allowlist and arguments again.
+- Model-generated strings are used only as validated `sort`, `limit`, or `pid`
+  arguments. There is no command, path, environment, or filesystem-write tool.
+- Tool output, incident text, and checkpointed model text are marked as
+  untrusted data in prompts. They are not interpreted as application
+  instructions.
+- Persisted state is local by default. It can contain process names and resource
+  measurements, so treat the checkpoint file as sensitive user data.
+- The Rust bridge still has no authentication or TLS; loopback is not a
+  complete security boundary. See the M3 limitations.
+- The model remains fallible. Reports are advisory; the tool trace and evidence
+  records are the ground truth for what was actually collected.
+
+### Migration
+
+M4 had no durable investigation checkpoints, so there is no M4-to-M5 checkpoint
+migration. M5 uses state version `1`; a future incompatible state version will be
+rejected with a message rather than resumed as if it were current.
+
 ## Testing and linting
 
 Rust:
@@ -570,10 +752,16 @@ PYTHONPATH=python/src python/.venv/bin/python -m unittest discover -s python/tes
 
 The Python suite includes deterministic unit tests with fake model responses and
 fake HTTP services, plus integration tests that start the real Rust service and
-exercise all five tools. The default suite does **not** require Ollama.
+exercise all five tools. Workflow tests cover graph stages, allowlist/argument
+rejection, evidence retention, step and tool budgets, malformed/timeout model
+behavior, tool service failures, inconclusive reports, checkpoint creation and
+resumption, simulated process interruption, corrupt/incompatible checkpoints,
+and duplicate-tool-call prevention. The default suite does **not** require
+Ollama. The M1–M4 tests remain in the same suite.
 
-Optional live LLM integration test (requires Ollama, the model, and the Rust
-service; the test starts its own Rust service):
+Optional live LLM integration tests (require Ollama, the model, and the Rust
+service; the test starts its own Rust service and covers both the M4 loop and the
+M5 graph):
 
 ```sh
 HADES_OLLAMA_INTEGRATION=1 \
@@ -619,12 +807,18 @@ and incident queries do not scan processes.
 - **LLM diagnoses are unreliable.** The local model can hallucinate, miss
   evidence, or overstate confidence. The report validation checks structure and
   citations, not the truth of every phrase. Use the tool trace.
-- **No long-term memory, RAG, or LangGraph.** Each investigation is independent;
-  there is no cross-session learning or graph workflow.
-- **Tool-call budget.** Investigations stop after the configured budget or turn
-  limit. Some problems need more evidence.
-- **Small context window.** Tool results and history are bounded/truncated; the
-  model may not see every detail.
+- **No long-term memory or RAG.** M5 checkpoints are recovery state, not
+  cross-investigation learning. Each investigation remains independent.
+- **Bounded investigation.** The graph stops at configured step, tool-call, and
+  consecutive-failure limits. Some problems need more evidence.
+- **Small context window.** Tool results, evidence, transitions, and planner
+  context are bounded/truncated; the model may not see every detail.
+- **Checkpoint state is local but not encrypted.** SQLite checkpoints can contain
+  process names, incident text, and resource measurements. Protect the file as
+  user data; no checkpoint leaves the machine by design.
+- **Read-only recovery only.** Duplicate prevention and fresh checks are safe
+  because all tools are read-only. A future mutating tool would require a
+  stronger transactional idempotency design before it could be used here.
 - **Bridge authentication.** Loopback is not a trust boundary. Any local process
   can call the read-only tools. The service does not log process data, but tool
   results can reveal process names and resource use.
@@ -650,11 +844,11 @@ and incident queries do not scan processes.
 ## Roadmap
 
 Completed: M1 metrics/CLI, M2 monitoring/detection/events, M3 bridge/client, M4
-local LLM diagnosis.
+local LLM diagnosis, M5 stateful LangGraph investigations with local recovery.
 
-Potential next milestone (not implemented): LangGraph-based stateful
-investigation, incident memory/RAG, and user-approved remediation with an audit
-trail. These are proposals, not current functionality.
+Potential next milestone (not implemented): long-term incident memory/RAG and
+user-approved remediation with an audit trail. These are proposals, not current
+functionality.
 
 ## License
 

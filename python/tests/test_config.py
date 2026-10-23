@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
 
 from hades_agent.config import AgentConfig
 from hades_agent.errors import ConfigurationError, ModelNotFoundError, ModelUnavailableError
@@ -14,6 +15,9 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.bridge_url, "http://127.0.0.1:8765")
         self.assertLessEqual(config.max_tool_calls, 32)
         self.assertLessEqual(config.max_iterations, 16)
+        self.assertLessEqual(config.max_steps, 64)
+        self.assertLessEqual(config.max_consecutive_tool_failures, 10)
+        self.assertTrue(str(config.checkpoint_db).endswith("investigations.sqlite"))
 
     def test_environment_values_override_defaults(self) -> None:
         config = AgentConfig.from_env(
@@ -23,6 +27,9 @@ class ConfigTests(unittest.TestCase):
                 "HADES_BRIDGE_URL": "http://127.0.0.1:9999",
                 "HADES_MAX_TOOL_CALLS": "4",
                 "HADES_MAX_ITERATIONS": "3",
+                "HADES_MAX_STEPS": "5",
+                "HADES_MAX_CONSECUTIVE_TOOL_FAILURES": "2",
+                "HADES_CHECKPOINT_DB": "/tmp/hades-test.sqlite",
             }
         )
         self.assertEqual(config.model, "llama3.1:8b")
@@ -30,6 +37,9 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.bridge_url, "http://127.0.0.1:9999")
         self.assertEqual(config.max_tool_calls, 4)
         self.assertEqual(config.max_iterations, 3)
+        self.assertEqual(config.max_steps, 5)
+        self.assertEqual(config.max_consecutive_tool_failures, 2)
+        self.assertEqual(config.checkpoint_db, Path("/tmp/hades-test.sqlite"))
 
     def test_non_loopback_endpoints_are_rejected(self) -> None:
         for key, value in (
@@ -45,6 +55,9 @@ class ConfigTests(unittest.TestCase):
             ("max_tool_calls", 0),
             ("max_tool_calls", 100),
             ("max_iterations", 0),
+            ("max_steps", 0),
+            ("max_steps", 100),
+            ("max_consecutive_tool_failures", 0),
             ("tool_timeout", 0),
         ):
             with self.subTest(key=key):
