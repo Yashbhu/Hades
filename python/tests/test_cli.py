@@ -5,10 +5,13 @@ import dataclasses
 import io
 import json
 import os
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from hades_agent.cli import build_parser, format_report, format_workflow, main
+from hades_agent.incident_memory import IncidentMemoryStore
 from hades_agent.models import (
     ConfidenceAssessment,
     ConfidenceLevel,
@@ -47,6 +50,18 @@ class CliTests(unittest.TestCase):
 
         incident = parser.parse_args(["incident", "--id", "inc-3"])
         self.assertEqual(incident.id, "inc-3")
+
+        history = parser.parse_args(
+            ["history", "--kind", "high_cpu", "--limit", "3", "--json"]
+        )
+        self.assertEqual(history.command, "history")
+        self.assertEqual(history.limit, 3)
+        self.assertTrue(history.json)
+
+        verify = parser.parse_args(
+            ["history-verify", "inc-1", "--status", "confirmed"]
+        )
+        self.assertEqual(verify.status, "confirmed")
 
     def test_incident_sources_are_mutually_exclusive(self) -> None:
         with contextlib.redirect_stderr(io.StringIO()):
@@ -126,25 +141,37 @@ class CliTests(unittest.TestCase):
     def test_main_wires_the_graph_workflow_and_emits_json(self) -> None:
         outcome = _outcome()
         stdout = io.StringIO()
-        with (
-            patch("hades_agent.cli.HadesClient"),
-            patch("hades_agent.cli.DiagnosticToolbox") as toolbox,
-            patch("hades_agent.cli.OllamaModelProvider") as provider,
-            patch("hades_agent.cli.InvestigationWorkflow") as workflow_cls,
-            contextlib.redirect_stdout(stdout),
-        ):
-            toolbox.from_client.return_value = object()
-            provider.return_value.create_chat_model.return_value = object()
-            workflow_cls.return_value.start.return_value = outcome
-            code = main(["ask", "Why?", "--json", "--checkpoint-db", "checkpoints.sqlite"])
+        with tempfile.TemporaryDirectory() as temp:
+            incident_db = Path(temp) / "incidents.sqlite"
+            with (
+                patch("hades_agent.cli.HadesClient"),
+                patch("hades_agent.cli.DiagnosticToolbox") as toolbox,
+                patch("hades_agent.cli.OllamaModelProvider") as provider,
+                patch("hades_agent.cli.InvestigationWorkflow") as workflow_cls,
+                contextlib.redirect_stdout(stdout),
+            ):
+                toolbox.from_client.return_value = object()
+                provider.return_value.create_chat_model.return_value = object()
+                workflow_cls.return_value.start.return_value = outcome
+                code = main(
+                    [
+                        "ask",
+                        "Why?",
+                        "--json",
+                        "--checkpoint-db",
+                        "checkpoints.sqlite",
+                        "--incident-db",
+                        str(incident_db),
+                    ]
+                )
 
-        self.assertEqual(code, 0)
-        output = json.loads(stdout.getvalue())
-        self.assertEqual(output["report"]["summary"], "CPU is elevated.")
-        self.assertEqual(output["investigation_id"], "inv-1")
-        self.assertIn("termination_status", output)
-        workflow_cls.return_value.start.assert_called_once()
-        workflow_cls.return_value.close.assert_called_once()
+            self.assertEqual(code, 0)
+            output = json.loads(stdout.getvalue())
+            self.assertEqual(output["report"]["summary"], "CPU is elevated.")
+            self.assertEqual(output["investigation_id"], "inv-1")
+            self.assertIn("termination_status", output)
+            workflow_cls.return_value.start.assert_called_once()
+            workflow_cls.return_value.close.assert_called_once()
 
     def test_status_command_uses_workflow_status_without_a_model(self) -> None:
         outcome = _outcome()
@@ -186,6 +213,115 @@ class CliTests(unittest.TestCase):
         ):
             self.assertIn(key, data)
 
+    def test_history_commands_inspect_verify_and_resolve(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            db = Path(temp) / "incidents.sqlite"
+            _seed_memory(db)
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                code = main(["history", "--incident-db", str(db), "--json"])
+            self.assertEqual(code, 0)
+            self.assertEqual(len(json.loads(stdout.getvalue())["incidents"]), 1)
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                code = main(
+                    [
+                        "history-verify",
+                        "inc-1",
+                        "--status",
+                        "confirmed",
+                        "--note",
+                        "confirmed locally",
+                        "--incident-db",
+                        str(db),
+                        "--json",
+                    ]
+                )
+            self.assertEqual(code, 0)
+            self.assertEqual(
+                json.loads(stdout.getvalue())["diagnosis"]["diagnosis_status"],
+                "confirmed",
+            )
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                code = main(
+                    [
+                        "history-resolve",
+                        "inc-1",
+                        "--resolution",
+                        "resolved",
+                        "--incident-db",
+                        str(db),
+                        "--json",
+                    ]
+                )
+            self.assertEqual(code, 0)
+            self.assertEqual(json.loads(stdout.getvalue())["resolution_status"], "resolved")
+
+    def test_history_export_and_confirmation(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            db = Path(temp) / "incidents.sqlite"
+            export = Path(temp) / "export.json"
+            _seed_memory(db)
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                code = main(
+                    [
+                        "history-delete",
+                        "inc-1",
+                        "--incident-db",
+                        str(db),
+                    ]
+                )
+            self.assertEqual(code, 2)
+            self.assertIn("--yes", stderr.getvalue())
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                code = main(
+                    [
+                        "history-export",
+                        "--output",
+                        str(export),
+                        "--incident-db",
+                        str(db),
+                        "--json",
+                    ]
+                )
+            self.assertEqual(code, 0)
+            self.assertTrue(export.exists())
+            self.assertEqual(export.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(json.loads(export.read_text())["schema_version"], 1)
+            self.assertTrue(json.loads(stdout.getvalue())["output"].endswith("export.json"))
+
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                code = main(
+                    [
+                        "history-export",
+                        "--output",
+                        str(db),
+                        "--force",
+                        "--incident-db",
+                        str(db),
+                    ]
+                )
+            self.assertEqual(code, 2)
+            self.assertIn("refusing to overwrite", stderr.getvalue())
+
+    def test_history_show_text_marks_historical_records(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            db = Path(temp) / "incidents.sqlite"
+            _seed_memory(db)
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                code = main(["history-show", "inc-1", "--incident-db", str(db)])
+            self.assertEqual(code, 0)
+            self.assertIn("Historical records are not current evidence", stdout.getvalue())
+            self.assertIn("verification are separate facts", stdout.getvalue())
+
     def test_incident_payload_accepts_event_envelopes(self) -> None:
         incident = IncidentContext.from_payload(
             {
@@ -203,6 +339,45 @@ class CliTests(unittest.TestCase):
         )
         self.assertEqual(incident.id, "inc-1")
         self.assertEqual(incident.severity, "critical")
+
+
+def _seed_memory(path: Path) -> None:
+    with IncidentMemoryStore(path) as store:
+        store.upsert_incident(
+            IncidentContext(
+                id="inc-1",
+                kind="high_cpu",
+                severity="warning",
+                state="active",
+                summary="CPU is high",
+                started_at="2026-01-01T00:00:00Z",
+                updated_at="2026-01-01T00:00:00Z",
+                evidence={
+                    "kind": "high_cpu",
+                    "observed": {"latest_percent": 90.0},
+                    "derived": {"recent_average_percent": 90.0},
+                },
+            )
+        )
+        store.record_investigation(
+            "inv-1",
+            "run-1",
+            incident_id="inc-1",
+            question="Why?",
+            model="qwen2.5:7b",
+            stage="terminated",
+        )
+        store.save_outcome(
+            investigation_id="inv-1",
+            execution_id="run-1",
+            incident_id="inc-1",
+            question="Why?",
+            model="qwen2.5:7b",
+            stage="terminated",
+            termination_status="completed",
+            report=_report(),
+            evidence=[],
+        )
 
 
 def _report() -> DiagnosticReport:

@@ -65,3 +65,19 @@ class InvestigationNotFoundError(CheckpointError):
 
 class InvestigationExistsError(CheckpointError):
     """An investigation with the requested ID already exists."""
+
+
+class MemoryStoreError(HadesAgentError):
+    """The local incident-history database could not be used safely."""
+
+
+class MemorySchemaError(MemoryStoreError):
+    """The incident-history schema is corrupt or from an unsupported version."""
+
+
+class MemoryNotFoundError(MemoryStoreError):
+    """A requested incident, investigation, or diagnosis does not exist."""
+
+
+class MemoryInputError(MemoryStoreError):
+    """A value supplied to the incident-history store is invalid."""

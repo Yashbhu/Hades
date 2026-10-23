@@ -18,6 +18,8 @@ class ConfigTests(unittest.TestCase):
         self.assertLessEqual(config.max_steps, 64)
         self.assertLessEqual(config.max_consecutive_tool_failures, 10)
         self.assertTrue(str(config.checkpoint_db).endswith("investigations.sqlite"))
+        self.assertTrue(str(config.incident_db).endswith("incident_history.sqlite"))
+        self.assertLessEqual(config.max_history_results, 20)
 
     def test_environment_values_override_defaults(self) -> None:
         config = AgentConfig.from_env(
@@ -30,6 +32,8 @@ class ConfigTests(unittest.TestCase):
                 "HADES_MAX_STEPS": "5",
                 "HADES_MAX_CONSECUTIVE_TOOL_FAILURES": "2",
                 "HADES_CHECKPOINT_DB": "/tmp/hades-test.sqlite",
+                "HADES_INCIDENT_DB": "/tmp/hades-incidents.sqlite",
+                "HADES_MAX_HISTORY_RESULTS": "3",
             }
         )
         self.assertEqual(config.model, "llama3.1:8b")
@@ -40,6 +44,8 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.max_steps, 5)
         self.assertEqual(config.max_consecutive_tool_failures, 2)
         self.assertEqual(config.checkpoint_db, Path("/tmp/hades-test.sqlite"))
+        self.assertEqual(config.incident_db, Path("/tmp/hades-incidents.sqlite"))
+        self.assertEqual(config.max_history_results, 3)
 
     def test_non_loopback_endpoints_are_rejected(self) -> None:
         for key, value in (
@@ -59,6 +65,9 @@ class ConfigTests(unittest.TestCase):
             ("max_steps", 100),
             ("max_consecutive_tool_failures", 0),
             ("tool_timeout", 0),
+            ("max_history_results", 0),
+            ("max_history_results", 100),
+            ("max_history_chars", 100),
         ):
             with self.subTest(key=key):
                 with self.assertRaises(ConfigurationError):

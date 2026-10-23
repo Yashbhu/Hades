@@ -8,7 +8,9 @@ import json
 import os
 import sys
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from hades_client import (
     AgentConnectionError,
@@ -19,11 +21,25 @@ from hades_client import (
 )
 
 from .config import AgentConfig
-from .errors import HadesAgentError, IncidentInputError
+from .errors import HadesAgentError, IncidentInputError, MemoryInputError
+from .incident_memory import (
+    IncidentMemoryStore,
+    IncidentRecord,
+    cutoff_days_ago,
+)
 from .model import OllamaModelProvider
 from .models import DiagnosticReport, IncidentContext, InvestigationResult
 from .tools import DiagnosticToolbox
 from .workflow import InvestigationWorkflow, TerminationStatus, WorkflowOutcome
+
+
+@dataclass(frozen=True)
+class MemoryCommandResult:
+    """A non-investigation command result with JSON and text renderings."""
+
+    payload: dict[str, Any]
+    text: str
+    exit_code: int = 0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -50,6 +66,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Local SQLite checkpoint path (default: ~/.hades/investigations.sqlite)",
     )
     common.add_argument(
+        "--incident-db",
+        type=Path,
+        help="Local SQLite incident-history path (default: ~/.hades/incident_history.sqlite)",
+    )
+    common.add_argument(
+        "--max-history-results",
+        type=int,
+        help="Maximum historical incidents supplied to the planner (1-20)",
+    )
+    common.add_argument(
         "--json",
         action="store_true",
         help="Print the investigation snapshot and report as JSON",
@@ -59,7 +85,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="hades-agent",
         description="Local-first diagnostic agent over read-only Hades tools.",
     )
-    parser.add_argument("--version", action="version", version="hades-agent 0.5.0")
+    parser.add_argument("--version", action="version", version="hades-agent 0.6.0")
     commands = parser.add_subparsers(dest="command", required=True)
 
     ask = commands.add_parser(
@@ -126,6 +152,112 @@ def build_parser() -> argparse.ArgumentParser:
         help="Local SQLite checkpoint path (default: ~/.hades/investigations.sqlite)",
     )
     status.add_argument("--json", action="store_true", help="Print the snapshot as JSON")
+
+    memory_common = argparse.ArgumentParser(add_help=False)
+    memory_common.add_argument(
+        "--incident-db",
+        type=Path,
+        help="Local SQLite incident-history path (default: ~/.hades/incident_history.sqlite)",
+    )
+    memory_common.add_argument("--json", action="store_true", help="Print as JSON")
+
+    history = commands.add_parser(
+        "history",
+        parents=[memory_common],
+        help="Inspect stored incident history",
+        description="List durable incident records with optional structured filters.",
+    )
+    history.add_argument("--limit", type=int, default=20, help="Maximum records (1-200)")
+    history.add_argument("--kind", help="Filter by incident kind")
+    history.add_argument("--state", help="Filter by M2 lifecycle state")
+    history.add_argument(
+        "--resolution",
+        choices=("open", "resolved", "recovered"),
+        help="Filter by resolution status",
+    )
+    history.add_argument("--severity", help="Filter by severity")
+    history.add_argument("--tag", help="Filter by tag")
+    history.add_argument("--since", help="Only incidents updated at/after this ISO timestamp")
+
+    history_show = commands.add_parser(
+        "history-show",
+        parents=[memory_common],
+        help="Show one incident and its associations",
+        description="Read a stored incident, its evidence, diagnoses, and events.",
+    )
+    history_show.add_argument("incident_id", help="Incident ID")
+
+    history_verify = commands.add_parser(
+        "history-verify",
+        parents=[memory_common],
+        help="Record a diagnosis verification outcome",
+        description="Append confirmed, disproved, or unknown verification evidence.",
+    )
+    history_verify.add_argument("incident_id", help="Incident ID")
+    history_verify.add_argument(
+        "--status",
+        required=True,
+        choices=("confirmed", "disproved", "unknown"),
+        help="Verification outcome",
+    )
+    history_verify.add_argument("--investigation", help="Specific investigation ID")
+    history_verify.add_argument("--note", default="", help="Bounded verification note")
+
+    history_resolve = commands.add_parser(
+        "history-resolve",
+        parents=[memory_common],
+        help="Record an incident resolution status",
+        description="Record resolution separately from diagnosis verification.",
+    )
+    history_resolve.add_argument("incident_id", help="Incident ID")
+    history_resolve.add_argument(
+        "--resolution",
+        required=True,
+        choices=("open", "resolved", "recovered"),
+        help="Resolution status",
+    )
+    history_resolve.add_argument("--note", default="", help="Bounded note")
+
+    history_export = commands.add_parser(
+        "history-export",
+        parents=[memory_common],
+        help="Export incident history to a local JSON file",
+        description="Write a bounded, local-only structured export.",
+    )
+    history_export.add_argument("--output", type=Path, required=True, help="Output JSON path")
+    history_export.add_argument(
+        "--limit", type=int, default=1_000, help="Maximum rows per table (1-1000)"
+    )
+    history_export.add_argument(
+        "--force", action="store_true", help="Replace an existing output file"
+    )
+
+    history_delete = commands.add_parser(
+        "history-delete",
+        parents=[memory_common],
+        help="Delete one incident and its dependent records",
+        description="Permanently delete one local incident record.",
+    )
+    history_delete.add_argument("incident_id", help="Incident ID")
+    history_delete.add_argument(
+        "--yes", action="store_true", help="Confirm permanent deletion"
+    )
+
+    history_prune = commands.add_parser(
+        "history-prune",
+        parents=[memory_common],
+        help="Delete old incident and investigation records",
+        description="Apply local retention to records older than a cutoff.",
+    )
+    history_prune.add_argument(
+        "--older-than-days", type=int, required=True, help="Retention window in days"
+    )
+    history_prune.add_argument(
+        "--dry-run", action="store_true", help="Report counts without deleting"
+    )
+    history_prune.add_argument(
+        "--yes", action="store_true", help="Confirm permanent deletion"
+    )
     return parser
 
 
@@ -135,7 +267,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command in {"ask", "incident"} and not getattr(args, "investigation_id", None):
         args.investigation_id = str(uuid.uuid4())
     try:
-        outcome = run(args)
+        result = run(args)
     except HadesAgentError as error:
         print(f"error: {error}", file=sys.stderr)
         return 2
@@ -151,51 +283,167 @@ def main(argv: list[str] | None = None) -> int:
             print("interrupted", file=sys.stderr)
         return 130
 
+    if isinstance(result, MemoryCommandResult):
+        print(
+            json.dumps(result.payload, ensure_ascii=False, indent=2)
+            if args.json
+            else result.text
+        )
+        return result.exit_code
+
     if args.json:
-        print(json.dumps(outcome.to_dict(), ensure_ascii=False, indent=2))
+        print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2))
     else:
-        print(format_workflow(outcome))
-    return _exit_code(outcome)
+        print(format_workflow(result))
+    return _exit_code(result)
 
 
-def run(args: argparse.Namespace) -> WorkflowOutcome:
+def run(args: argparse.Namespace) -> WorkflowOutcome | MemoryCommandResult:
+    if args.command.startswith("history"):
+        return _run_memory_command(args)
     if args.command == "status":
         return InvestigationWorkflow.status(_status_config(args), args.investigation_id)
 
     config = _config_from_args(args)
-    client = HadesClient(config.bridge_url, timeout=config.tool_timeout)
-    toolbox = DiagnosticToolbox.from_client(client)
-
-    incident: IncidentContext | None = None
-    question = ""
-    if args.command == "resume":
-        pass
-    elif args.command == "ask":
-        question = args.question
-        if args.incident_file is not None:
-            incident = _load_incident_file(args.incident_file)
-    elif args.command == "incident":
-        question = args.question
-        if args.file is not None:
-            incident = _load_incident_file(args.file)
-        elif args.latest:
-            incident = _latest_incident(client)
-        else:
-            incident = _incident_by_id(client, args.id)
-
-    provider = OllamaModelProvider(config)
-    model = provider.create_chat_model()
-    workflow = InvestigationWorkflow(toolbox, model, config)
+    memory = IncidentMemoryStore(config.incident_db)
     try:
+        client = HadesClient(config.bridge_url, timeout=config.tool_timeout)
+        toolbox = DiagnosticToolbox.from_client(client)
+
+        incident: IncidentContext | None = None
+        question = ""
         if args.command == "resume":
-            return workflow.resume(args.investigation_id)
-        return workflow.start(
-            question,
-            incident,
-            investigation_id=args.investigation_id,
-        )
+            pass
+        elif args.command == "ask":
+            question = args.question
+            if args.incident_file is not None:
+                incident = _load_incident_file(args.incident_file)
+        elif args.command == "incident":
+            question = args.question
+            if args.file is not None:
+                incident = _load_incident_file(args.file)
+            elif args.latest:
+                incident = _latest_incident(client)
+            else:
+                incident = _incident_by_id(client, args.id)
+
+        provider = OllamaModelProvider(config)
+        model = provider.create_chat_model()
+        workflow = InvestigationWorkflow(toolbox, model, config, memory=memory)
+        try:
+            if args.command == "resume":
+                return workflow.resume(args.investigation_id)
+            return workflow.start(
+                question,
+                incident,
+                investigation_id=args.investigation_id,
+            )
+        finally:
+            workflow.close()
     finally:
-        workflow.close()
+        memory.close()
+
+
+def _run_memory_command(args: argparse.Namespace) -> MemoryCommandResult:
+    config = _memory_config(args)
+    with IncidentMemoryStore(config.incident_db) as store:
+        if args.command == "history":
+            records = store.list_incidents(
+                limit=args.limit,
+                kind=args.kind,
+                state=args.state,
+                resolution_status=args.resolution,
+                severity=args.severity,
+                tag=args.tag,
+                since=args.since,
+            )
+            payload = {
+                "schema_version": store.schema_version,
+                "incidents": [record.to_dict() for record in records],
+            }
+            return MemoryCommandResult(payload, _format_history(records))
+
+        if args.command == "history-show":
+            data = store.get_incident(args.incident_id)
+            return MemoryCommandResult(data, _format_history_detail(data))
+
+        if args.command == "history-verify":
+            diagnosis = store.add_diagnosis_verification(
+                args.incident_id,
+                args.status,
+                investigation_id=args.investigation,
+                note=args.note,
+            )
+            payload = {
+                "incident_id": args.incident_id,
+                "diagnosis": diagnosis,
+            }
+            text = (
+                f"Recorded diagnosis verification for {args.incident_id}: "
+                f"{args.status}\nInvestigation: "
+                f"{diagnosis['investigation_id']}\n"
+            )
+            return MemoryCommandResult(payload, text)
+
+        if args.command == "history-resolve":
+            record = store.resolve_incident(
+                args.incident_id, args.resolution, note=args.note
+            )
+            payload = record.to_dict()
+            text = (
+                f"Incident {record.incident_id}: resolution "
+                f"{record.resolution_status}\n"
+                "Diagnosis verification is unchanged; resolution and verification "
+                "are separate facts.\n"
+            )
+            return MemoryCommandResult(payload, text)
+
+        if args.command == "history-export":
+            data = store.export(limit=args.limit)
+            target = _write_export(
+                args.output,
+                data,
+                force=args.force,
+                protected_paths=(config.incident_db, config.checkpoint_db),
+            )
+            payload = {
+                "output": str(target),
+                "schema_version": data["schema_version"],
+                "incident_rows": len(data["tables"].get("incidents", [])),
+            }
+            return MemoryCommandResult(
+                payload,
+                f"Exported incident history to {target} (schema "
+                f"{data['schema_version']}).\n",
+            )
+
+        if args.command == "history-delete":
+            if not args.yes:
+                raise MemoryInputError(
+                    "refusing to delete incident history without --yes"
+                )
+            result = store.delete_incident(args.incident_id)
+            return MemoryCommandResult(
+                result,
+                f"Deleted incident {args.incident_id} and dependent records.\n",
+            )
+
+        if args.command == "history-prune":
+            if not args.dry_run and not args.yes:
+                raise MemoryInputError(
+                    "refusing to prune incident history without --yes"
+                )
+            cutoff = cutoff_days_ago(args.older_than_days)
+            result = store.prune(cutoff, dry_run=args.dry_run)
+            action = "Would delete" if args.dry_run else "Deleted"
+            text = (
+                f"{action} {result['incidents']} incidents and "
+                f"{result['investigations']} investigations older than "
+                f"{result['before']}.\n"
+            )
+            return MemoryCommandResult(result, text)
+
+    raise MemoryInputError(f"unsupported history command: {args.command}")
 
 
 def _status_config(args: argparse.Namespace) -> AgentConfig:
@@ -214,6 +462,18 @@ def _status_config(args: argparse.Namespace) -> AgentConfig:
     checkpoint_db = getattr(args, "checkpoint_db", None)
     if checkpoint_db is not None:
         config = config.merged(checkpoint_db=checkpoint_db)
+    return config
+
+
+def _memory_config(args: argparse.Namespace) -> AgentConfig:
+    """Build only the configuration needed for local incident-memory commands."""
+    config = AgentConfig()
+    env_incident = os.environ.get("HADES_INCIDENT_DB")
+    if env_incident:
+        config = config.merged(incident_db=env_incident)
+    incident_db = getattr(args, "incident_db", None)
+    if incident_db is not None:
+        config = config.merged(incident_db=incident_db)
     return config
 
 
@@ -236,6 +496,8 @@ def _config_from_args(args: argparse.Namespace) -> AgentConfig:
             args, "max_consecutive_tool_failures", None
         ),
         checkpoint_db=getattr(args, "checkpoint_db", None),
+        incident_db=getattr(args, "incident_db", None),
+        max_history_results=getattr(args, "max_history_results", None),
     )
 
 
@@ -278,6 +540,181 @@ def _incident_by_id(client: HadesClient, incident_id: str) -> IncidentContext:
     raise IncidentInputError(
         f"incident {incident_id!r} was not found among the 100 most recent incidents"
     )
+
+
+def _format_history(records: list[IncidentRecord]) -> str:
+    lines = ["Incident history", "================"]
+    if not records:
+        lines.append("No stored incidents matched.")
+        lines.append("")
+        return "\n".join(lines)
+    for record in records:
+        lines.append(
+            f"- {record.incident_id} [{record.kind}/{record.severity}] "
+            f"{record.state}; resolution={record.resolution_status}; "
+            f"diagnosis={record.latest_diagnosis_status or 'none'}"
+        )
+        lines.append(f"  {record.summary}")
+        lines.append(f"  updated: {record.updated_at}")
+        if record.tags:
+            lines.append(f"  tags: {', '.join(record.tags)}")
+    lines.append("")
+    lines.append("Use `hades-agent history-show <incident-id>` for details.")
+    return "\n".join(lines)
+
+
+def _format_history_detail(data: dict[str, Any]) -> str:
+    lines = [
+        "Incident",
+        "========",
+        f"ID: {data.get('incident_id')}",
+        f"Kind: {data.get('kind')}",
+        f"Severity: {data.get('severity')}",
+        f"State: {data.get('state')}",
+        f"Resolution: {data.get('resolution_status')}",
+        f"Summary: {data.get('summary')}",
+        f"Updated: {data.get('updated_at')}",
+        "",
+    ]
+    metrics = data.get("metrics") or []
+    lines.append("Latest metric samples")
+    lines.append("---------------------")
+    if metrics:
+        latest: dict[str, dict[str, Any]] = {}
+        for metric in metrics:
+            name = str(metric.get("name"))
+            latest.setdefault(name, metric)
+        for name, metric in latest.items():
+            lines.append(
+                f"- {name}: {metric.get('value')} {metric.get('unit', '')} "
+                f"({metric.get('observed_at')})"
+            )
+    else:
+        lines.append("- None stored.")
+    lines.append("")
+
+    investigations = data.get("investigations") or []
+    lines.append("Investigations")
+    lines.append("--------------")
+    if investigations:
+        for investigation in investigations[:20]:
+            lines.append(
+                f"- {investigation.get('investigation_id')} "
+                f"({investigation.get('stage')}, "
+                f"{investigation.get('termination_status') or 'unterminated'})"
+            )
+    else:
+        lines.append("- None stored.")
+    lines.append("")
+
+    diagnoses = data.get("diagnoses") or []
+    lines.append("Diagnoses")
+    lines.append("---------")
+    if diagnoses:
+        for diagnosis in diagnoses:
+            lines.append(
+                f"- {diagnosis.get('investigation_id')}: "
+                f"{diagnosis.get('diagnosis_status')} / "
+                f"{diagnosis.get('summary')}"
+            )
+            if diagnosis.get("verification_note"):
+                lines.append(f"  Note: {diagnosis['verification_note']}")
+    else:
+        lines.append("- None stored.")
+    lines.append("")
+
+    evidence = data.get("evidence") or []
+    lines.append("Current investigation evidence")
+    lines.append("------------------------------")
+    if evidence:
+        for item in evidence[:20]:
+            lines.append(
+                f"- [{item.get('tool')}] {str(item.get('summary', ''))[:500]}"
+            )
+    else:
+        lines.append("- None stored.")
+    lines.append("")
+
+    actions = data.get("actions") or []
+    if actions:
+        lines.append("Recorded remediation actions")
+        lines.append("------------------------------")
+        for item in actions[:20]:
+            lines.append(
+                f"- {item.get('status')}: {item.get('action')} "
+                f"({item.get('outcome') or 'no outcome recorded'})"
+            )
+        lines.append("")
+
+    verifications = data.get("diagnosis_verifications") or []
+    if verifications:
+        lines.append("Verification history")
+        lines.append("-------------------")
+        for item in verifications[:20]:
+            lines.append(
+                f"- {item.get('verified_at')}: {item.get('status')} "
+                f"({item.get('note') or 'no note'})"
+            )
+        lines.append("")
+
+    events = data.get("events") or []
+    if events:
+        lines.append("Lifecycle events")
+        lines.append("----------------")
+        for item in events[:20]:
+            lines.append(
+                f"- {item.get('occurred_at')}: {item.get('event_type')} "
+                f"({item.get('detail') or 'no detail'})"
+            )
+        lines.append("")
+    lines.extend(
+        [
+            "Historical records are not current evidence. Resolution and diagnosis",
+            "verification are separate facts; this store never executes remediation.",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def _write_export(
+    path: Path,
+    data: dict[str, Any],
+    *,
+    force: bool,
+    protected_paths: tuple[Path, ...] = (),
+) -> Path:
+    target = path.expanduser()
+    target_resolved = target.resolve()
+    for protected in protected_paths:
+        if target_resolved == Path(protected).expanduser().resolve():
+            raise MemoryInputError(
+                "refusing to overwrite a Hades database with a JSON export"
+            )
+    try:
+        target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    except OSError as error:
+        raise MemoryInputError(
+            f"cannot create export directory {target.parent}: {error}"
+        ) from error
+    if target.exists() and not force:
+        raise MemoryInputError(
+            f"{target} already exists; pass --force to replace it"
+        )
+    temporary = target.with_name(f".{target.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        temporary.write_text(
+            json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, target)
+    except OSError as error:
+        raise MemoryInputError(f"cannot write export {target}: {error}") from error
+    finally:
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
+    return target
 
 
 def format_report(result: InvestigationResult) -> str:
@@ -326,6 +763,36 @@ def format_workflow(outcome: WorkflowOutcome) -> str:
         lines.extend(["Diagnosis", "=========", outcome.report.summary, ""])
         lines.extend(_report_sections(outcome.report))
 
+    if outcome.historical_incidents:
+        lines.append("Historical context (not current evidence)")
+        lines.append("-----------------------------------------")
+        for item in outcome.historical_incidents:
+            incident_id = item.get("incident_id", "unknown")
+            summary = str(item.get("summary", ""))[:300]
+            lines.append(
+                f"- {incident_id} [{item.get('kind', 'unknown')}]: {summary}"
+            )
+            diagnosis = item.get("prior_diagnosis")
+            if isinstance(diagnosis, dict):
+                lines.append(
+                    "  Prior diagnosis: "
+                    f"{diagnosis.get('diagnosis_status', 'unknown')} / "
+                    f"{str(diagnosis.get('summary', ''))[:300]}"
+                )
+            actions = item.get("prior_actions")
+            if isinstance(actions, list):
+                for action in actions[:3]:
+                    if isinstance(action, dict):
+                        lines.append(
+                            "  Prior action: "
+                            f"{action.get('status', 'unknown')} / "
+                            f"{str(action.get('action', ''))[:300]}"
+                        )
+            reason = item.get("ranking_reason")
+            if reason:
+                lines.append(f"  Retrieved because: {reason}")
+        lines.append("")
+
     if outcome.contradictions:
         lines.append("Contradictory evidence")
         lines.append("---------------------")
@@ -341,6 +808,16 @@ def format_workflow(outcome: WorkflowOutcome) -> str:
         lines.extend(
             f"- {item.get('tool') or '(unknown)'}: {item.get('code', 'error')}"
             for item in outcome.tool_errors
+        )
+    if outcome.memory_errors:
+        lines.append("Incident-memory warnings:")
+        lines.extend(
+            f"- {item.get('stage', 'memory')}: {item.get('message', 'error')}"
+            for item in outcome.memory_errors
+        )
+        lines.append(
+            "The investigation result is still shown; some incident-memory "
+            "operations failed."
         )
     lines.extend(_report_footer())
     return "\n".join(lines)

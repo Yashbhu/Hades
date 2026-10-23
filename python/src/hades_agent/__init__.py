@@ -11,6 +11,10 @@ from .errors import (
     InvestigationExistsError,
     InvestigationInputError,
     InvestigationNotFoundError,
+    MemoryInputError,
+    MemoryNotFoundError,
+    MemorySchemaError,
+    MemoryStoreError,
     ModelInferenceError,
     ModelNotFoundError,
     ModelUnavailableError,
@@ -19,6 +23,15 @@ from .errors import (
     ToolArgumentError,
     ToolCatalogError,
     ToolServiceError,
+)
+from .incident_memory import (
+    SCHEMA_VERSION as INCIDENT_MEMORY_SCHEMA_VERSION,
+)
+from .incident_memory import (
+    HistoricalIncident,
+    IncidentMemoryStore,
+    IncidentRecord,
+    MetricSample,
 )
 from .models import (
     ConfidenceAssessment,
@@ -64,6 +77,15 @@ __all__ = [
     "InvestigationState",
     "InvestigationWorkflow",
     "InvestigationResult",
+    "INCIDENT_MEMORY_SCHEMA_VERSION",
+    "IncidentMemoryStore",
+    "IncidentRecord",
+    "HistoricalIncident",
+    "MemoryInputError",
+    "MemoryNotFoundError",
+    "MemorySchemaError",
+    "MemoryStoreError",
+    "MetricSample",
     "ModelInferenceError",
     "ModelNotFoundError",
     "ModelUnavailableError",

@@ -11,15 +11,17 @@ Hades is built in milestones. The current repository implements:
 | **M3** | Complete | Loopback JSON HTTP bridge exposing five registered read-only diagnostic tools, plus a typed Python client |
 | **M4** | Complete | Local Ollama + LangChain diagnostic agent with bounded tool calling and Pydantic-validated reports; the optional live Ollama test requires a local model |
 | **M5** | Complete | LangGraph investigation workflow with typed state, explicit transitions, SQLite checkpoints, resumable investigations, and deterministic evidence/termination handling |
+| **M6** | Complete | Durable, versioned SQLite incident history; deterministic historical retrieval; verification/resolution tracking; bounded history context in the M5 graph |
 
-There is no long-term memory, RAG, vector database, fine-tuning, remediation, web
-dashboard, or remote LLM provider in this repository. M5 deliberately does not add
-semantic memory or a multi-agent orchestration framework.
+M6 adds structured local incident memory, not a vector database, RAG framework,
+fine-tuning, automatic remediation, multi-agent workflow, dashboard, or cloud
+storage. There is no remote LLM provider in this repository.
 
 > **Implementation note:** the M4 code in this repository uses Ollama
-> (`ChatOllama`) for local inference, not a direct `llama.cpp` binding. M5 keeps
-> that working inference layer and adds LangGraph around it. No hosted provider or
-> remote fallback is introduced.
+> (`ChatOllama`) for local inference, not a direct `llama.cpp` binding. M5 and M6
+> keep that working inference layer; LangGraph controls workflow state and SQLite
+> stores checkpoints and incident history. No hosted provider or remote fallback
+> is introduced.
 
 ## Design principles
 
@@ -31,16 +33,19 @@ semantic memory or a multi-agent orchestration framework.
   or filesystem mutation.
 - **Facts are separate from hypotheses.** M2 incidents contain measurements and
   derived values. M4/M5 reports and workflow state keep tool observations
-  separate from uncertain causes.
+  separate from uncertain causes. M6 historical records are labelled as prior
+  context and are never merged into the current evidence list.
 - **Missing data is not zero.** Unavailable metrics are `null` or omitted, with
   an issue entry. Monitoring and tools never invent values.
-- **Bounded state and bounded work.** History, incidents, graph steps, tool
-  calls, evidence summaries, checkpoint transitions, and prompt context are
-  capped; the bridge limits request bodies and result sizes.
+- **Bounded state and bounded work.** Runtime history, incidents, graph steps,
+  tool calls, evidence summaries, checkpoint transitions, historical retrieval,
+  and prompt context are capped; the bridge limits request bodies and result
+  sizes.
 - **Durable but local.** M5 checkpoints and its write-ahead tool journal live in
-  a local SQLite database by default. A resumed investigation reuses completed
-  read-only results; an uncertain in-flight call is repeated only as an explicit
-  fresh read-only check.
+  a local SQLite database by default. M6 incident history is a separate local
+  SQLite database with an explicit schema version. A resumed investigation
+  reuses completed read-only results; an uncertain in-flight call is repeated
+  only as an explicit fresh read-only check.
 - **Deterministic detection.** Anomaly detection is ordinary Rust code, not an
   LLM.
 
@@ -132,10 +137,11 @@ Rust CLI commands remain unchanged.
 │                                                                         │
 │  Python: hades_agent                                                    │
 │  ├── DiagnosticToolbox: allowlist + Pydantic argument validation        │
-│  ├── LangGraph: initialize → plan → validate → execute → assess         │
-│  │              → finalize/terminate, with bounded loops                 │
+│  ├── LangGraph: initialize → retrieve_history → plan → validate         │
+│  │              → execute → assess → finalize/terminate, bounded loops   │
 │  ├── LangChain ChatOllama: local planning and report generation         │
 │  ├── SQLite checkpoints + read-only tool journal                        │
+│  ├── SQLite incident memory + deterministic historical retrieval        │
 │  └── Pydantic DiagnosticReport and workflow outcome models              │
 │                                                                         │
 │  Ollama (127.0.0.1:11434) ──► local tool-calling model                  │
@@ -178,9 +184,10 @@ python/src/
     ├── tools.py         Exact five-tool allowlist and argument schemas
     ├── model.py         Ollama preflight and ChatOllama construction
     ├── agent.py         M4 bounded loop, prompts, report validation
-    ├── workflow.py      M5 LangGraph state, transitions, SQLite checkpoints
+    ├── workflow.py      M5/M6 LangGraph state, transitions, checkpoints
+    ├── incident_memory.py  M6 versioned SQLite history and retrieval
     ├── models.py        Pydantic incident/report/trace models
-    ├── cli.py           `hades-agent` CLI (ask/incident/resume/status)
+    ├── cli.py           `hades-agent` CLI (investigate/status/memory)
     └── errors.py        Actionable error types
 ```
 
@@ -456,6 +463,9 @@ Ollama URL is rejected.
 | `HADES_MAX_STEPS` | `12` | M5 graph planning steps per investigation (1–64) |
 | `HADES_MAX_CONSECUTIVE_TOOL_FAILURES` | `3` | Stop after this many consecutive rejected/failed actions (1–10) |
 | `HADES_CHECKPOINT_DB` | `~/.hades/investigations.sqlite` | Local SQLite checkpoint and tool-journal path |
+| `HADES_INCIDENT_DB` | `~/.hades/incident_history.sqlite` | Local SQLite incident-history path |
+| `HADES_MAX_HISTORY_RESULTS` | `5` | Historical incidents supplied to planning (1–20) |
+| `HADES_MAX_HISTORY_CHARS` | `8000` | Bounded serialized historical context (1,000–64,000 characters) |
 | `HADES_MAX_CONTEXT_CHARS` | `24000` | Bounded planner context (4,096–131,072 characters) |
 | `HADES_NUM_CTX` | `16384` | Ollama context window |
 | `HADES_NUM_PREDICT` | `1024` | Maximum generated tokens per response |
@@ -609,6 +619,8 @@ START
   │
 initialize
   │
+retrieve_history  (M6; empty when memory is unavailable)
+  │
 plan ───────────────► terminate
   │  (valid tool action)   (model/state error)
 validate ──► execute ──► assess
@@ -664,8 +676,8 @@ ID and each outcome includes the latest checkpoint ID.
 - The checkpoint directory is created with user-only permissions where the
   platform allows it. No checkpoint is sent over the network.
 
-This milestone does not implement long-term semantic memory or RAG. Checkpoints
-are per-investigation recovery state.
+This milestone does not implement semantic memory or RAG. Checkpoints are
+per-investigation recovery state; M6 adds separate structured incident memory.
 
 ### CLI
 
@@ -700,7 +712,8 @@ reason, followed by the same evidence/hypothesis/confidence sections as M4.
 JSON output includes the M5 fields (`investigation_id`, `execution_id`, `stage`,
 `step_count`, `tool_call_count`, `evidence`, `tool_errors`, `hypotheses`,
 `missing_evidence`, `contradictions`, `next_checks`, `termination_status`,
-`termination_reason`, `checkpoint_id`, `next_nodes`, and `resumable`) plus the
+`termination_reason`, `checkpoint_id`, `next_nodes`, `resumable`,
+`historical_incidents`, `memory_errors`, and `memory_status`) plus the
 M4-compatible `report`, `model`, `limits`, `iterations`, `tool_calls`,
 `budget_exhausted`, and `iteration_limit_reached` keys.
 
@@ -732,6 +745,173 @@ M4 had no durable investigation checkpoints, so there is no M4-to-M5 checkpoint
 migration. M5 uses state version `1`; a future incompatible state version will be
 rejected with a message rather than resumed as if it were current.
 
+## M6 incident memory and historical retrieval
+
+M6 makes completed incidents durable and searchable without turning an old
+diagnosis into a current fact. It uses ordinary SQLite queries; there are no
+embeddings, vector indexes, or RAG framework dependencies.
+
+### Data model and migration design
+
+Incident memory lives in `~/.hades/incident_history.sqlite` by default. It is a
+separate database from M5's `investigations.sqlite`; deleting or rotating one
+does not silently destroy the other.
+
+The schema is versioned with SQLite `PRAGMA user_version`, currently **1**. The
+version is stored in every export and is checked before any read or write.
+Migrations run inside an immediate transaction and update the version only after
+all schema statements succeed. A database from a newer build is rejected with
+an actionable `MemorySchemaError`; it is not modified, reset, or overwritten. A
+corrupt file produces `MemoryStoreError` instead of silently creating a new
+history.
+
+Schema version 1 contains:
+
+| Table | Purpose |
+| --- | --- |
+| `incidents` | Canonical M2 fields (`incident_id`, kind, severity, subject, state, summary, timestamps), resolution status, creation/update metadata |
+| `incident_metrics` | Allowlisted numerical measurements used for explicit similarity comparisons |
+| `incident_tags` | Bounded user/agent tags |
+| `investigations` | Investigation/execution IDs, associated incident, question, model, stage, termination status, validated report JSON |
+| `evidence` | Current investigation evidence with tool, redacted validated arguments, bounded summary, collection time, call ID, truncation/fresh-check flags, duration |
+| `diagnoses` | Final report, diagnosis summary, confidence label/explanation, verification status, supporting evidence IDs |
+| `diagnosis_verifications` | Append-only confirmed/disproved/unknown verification events |
+| `incident_actions` | Caller-supplied proposed/approved/executed/rejected remediation records and outcomes; M6 never executes them |
+| `incident_events` | Append-only incident/investigation lifecycle events |
+
+Indexes cover the common filters: incident kind and update time, state, resolution
+status, investigation association, evidence timestamps, metric name/time,
+diagnosis history, event time, and tags. Writes use parameterized SQL and
+`BEGIN IMMEDIATE`; foreign keys, WAL, a busy timeout, and cascade deletion keep
+multi-record updates consistent under concurrent local access.
+
+Incident creation/update is idempotent. A monitor-observed `recovered` state sets
+`resolution_status=recovered` only while the record is still open. A diagnosis
+produced by the LLM is stored as `unverified`; it never marks the incident
+resolved. Verification and resolution are separate and independently auditable.
+
+### Retrieval strategy and ranking rules
+
+Given the current incident, retrieval:
+
+1. Selects up to 200 prior incidents with the same `kind`, excluding the current
+   incident ID.
+2. Extracts only allowlisted numerical measurements from M2 evidence, such as
+   CPU percent, memory percentages, or disk available percent. It does not store
+   full environment dumps or arbitrary tool output as metrics.
+3. Compares common metric names using
+   `abs(current - prior) / max(abs(current), abs(prior), 1e-9)`.
+4. Ranks deterministically by:
+   - same subject (for example the same mount point);
+   - the presence of comparable metric samples;
+   - lower mean relative metric difference;
+   - more recent update time;
+   - incident ID as a final stable tie-breaker.
+5. Returns at most `HADES_MAX_HISTORY_RESULTS` records (default 5), bounded again
+   by `HADES_MAX_HISTORY_CHARS` before entering the graph state.
+
+Each record includes a transparent `ranking_reason`, metric comparisons, the
+prior diagnosis with its verification status, and up to five prior actions. If
+no same-kind history exists, the result is an explicit empty list. There is no
+opaque similarity score.
+
+The model receives history in a separate `historical_incidents` key. It never
+appears in the current `evidence` array. Prior diagnoses are labelled
+`source=historical_diagnosis` and `is_current_fact=false`; prior actions are
+labelled `source=historical_action`. Prompt instructions state that historical
+records are not current observations, cannot be cited as current evidence, and
+must not be repeated blindly.
+
+### LangGraph integration and persistence
+
+M6 inserts one explicit node and stage between initialization and planning:
+
+```text
+initialize → retrieve_history → plan → validate → execute → assess
+                                      ↑                         │
+                                      └────── bounded loop ─────┘
+                                                          finalize → terminate
+```
+
+- `initialize` idempotently upserts the current incident and associates the
+  investigation before any model planning.
+- `retrieve_history` calls deterministic SQLite retrieval and copies bounded
+  historical context into the checkpointed state. It excludes the current
+  incident.
+- Planning and report generation reuse M5/M4 prompts and validation, with
+  historical context clearly separated from current evidence.
+- `terminate` persists the report, current evidence, diagnosis, and lifecycle
+  event. Persistence calls are idempotent so a crash between a database write and
+  a graph checkpoint does not duplicate the report or evidence.
+- A memory query/write failure is recorded in `memory_errors` and surfaced in
+  text/JSON output; the investigation does not fabricate historical evidence or
+  claim that persistence succeeded. An unreadable or incompatible database is
+  rejected when opened.
+
+The M5 checkpoint still carries recovery state for one investigation. Incident
+memory survives process restarts in a separate database and is queried by later
+investigations.
+
+### Database location and data-management commands
+
+Default path: `~/.hades/incident_history.sqlite`. Override with
+`HADES_INCIDENT_DB` or `--incident-db`. The directory and database are created
+with user-only permissions where the platform allows it.
+
+```sh
+# List recent incidents and filter by structured fields.
+hades-agent history
+hades-agent history --kind high_cpu --resolution open --limit 20 --json
+
+# Show one incident with metrics, investigations, evidence, diagnoses,
+# verification events, actions, and lifecycle events.
+hades-agent history-show inc-123
+
+# Append verification evidence. Missing outcomes are "unknown"/"unverified";
+# contradictory outcomes remain in the append-only history.
+hades-agent history-verify inc-123 --status confirmed --note "observed after restart"
+hades-agent history-verify inc-123 --status disproved --note "symptom returned"
+
+# Record resolution separately from diagnosis verification.
+hades-agent history-resolve inc-123 --resolution resolved
+
+# Write a bounded local JSON export. The file is created with user-only
+# permissions; use --force to replace an existing file.
+hades-agent history-export --output /tmp/hades-history.json
+
+# Permanently delete one incident and dependent records.
+hades-agent history-delete inc-123 --yes
+
+# Retention: preview or apply deletion of old incidents/investigations.
+hades-agent history-prune --older-than-days 90 --dry-run
+hades-agent history-prune --older-than-days 90 --yes
+```
+
+`history`, `history-show`, `history-export`, `history-delete`, and
+`history-prune` do not load Ollama or the Rust service. They only open the local
+incident database. Exports contain bounded structured records and no external
+telemetry is sent.
+
+### M6 security and privacy
+
+- Only canonical incident fields, allowlisted metrics, redacted arguments,
+  bounded summaries, and validated reports are stored. Sensitive top-level
+  argument keys are stored as `[redacted]`.
+- Incident text and historical records are treated as untrusted data in prompts.
+  They cannot add tools, alter limits, or issue shell commands.
+- Historical diagnoses are advisory. A confirmed old cause is still not proof of
+  the current cause, and a prior remediation is never executed automatically.
+- The database is local but **not encrypted**. It can contain process names,
+  incident text, evidence summaries, and resource measurements. Protect it as
+  sensitive user data.
+- There is no cloud synchronization, telemetry, or vector database.
+
+M5 state version remains `1`; M6 adds optional history fields that older
+checkpoints default to empty. Incident-memory schema version `1` is independent
+of the LangGraph state version. A future incident-memory schema change will use a
+new version and an explicit migration; incompatible databases are rejected with
+backup guidance rather than discarded.
+
 ## Testing and linting
 
 Rust:
@@ -756,12 +936,17 @@ exercise all five tools. Workflow tests cover graph stages, allowlist/argument
 rejection, evidence retention, step and tool budgets, malformed/timeout model
 behavior, tool service failures, inconclusive reports, checkpoint creation and
 resumption, simulated process interruption, corrupt/incompatible checkpoints,
-and duplicate-tool-call prevention. The default suite does **not** require
-Ollama. The M1–M4 tests remain in the same suite.
+and duplicate-tool-call prevention. M6 adds tests for schema creation/versioning,
+incident updates, filtered listing and transparent ranking, empty history,
+append-only verification, resolution/verification separation, incident/
+investigation/report association, redaction, export/deletion/pruning,
+concurrent access, corrupt/incompatible databases, history injection into the
+graph, and persistence across store reopens. The default suite does **not**
+require Ollama. The M1–M5 tests remain in the same suite.
 
 Optional live LLM integration tests (require Ollama, the model, and the Rust
 service; the test starts its own Rust service and covers both the M4 loop and the
-M5 graph):
+M5/M6 graph):
 
 ```sh
 HADES_OLLAMA_INTEGRATION=1 \
@@ -807,15 +992,25 @@ and incident queries do not scan processes.
 - **LLM diagnoses are unreliable.** The local model can hallucinate, miss
   evidence, or overstate confidence. The report validation checks structure and
   citations, not the truth of every phrase. Use the tool trace.
-- **No long-term memory or RAG.** M5 checkpoints are recovery state, not
-  cross-investigation learning. Each investigation remains independent.
+- **Structured memory, not semantic memory.** M6 retrieves by incident kind,
+  subject, explicit metric comparisons, and recency. It does not understand
+  paraphrased symptoms or free-text similarity. Adding embeddings/RAG would need
+  evidence that structured retrieval is insufficient.
+- **Historical diagnoses are not proof.** A prior confirmed diagnosis is
+  context for comparison, not a current fact. The model can still over-generalize
+  from history; the current evidence trace remains authoritative.
 - **Bounded investigation.** The graph stops at configured step, tool-call, and
   consecutive-failure limits. Some problems need more evidence.
 - **Small context window.** Tool results, evidence, transitions, and planner
   context are bounded/truncated; the model may not see every detail.
-- **Checkpoint state is local but not encrypted.** SQLite checkpoints can contain
-  process names, incident text, and resource measurements. Protect the file as
-  user data; no checkpoint leaves the machine by design.
+- **Checkpoints and incident memory are local but not encrypted.** SQLite files
+  can contain process names, incident text, evidence summaries, and resource
+  measurements. Protect them as user data; no checkpoint or history record
+  leaves the machine by design.
+- **Retention is explicit.** Nothing is deleted automatically. Use
+  `history-prune` with a retention window and `--dry-run` first. Deleting an
+  incident cascades to its associated investigations, evidence, diagnoses,
+  metrics, actions, and events.
 - **Read-only recovery only.** Duplicate prevention and fresh checks are safe
   because all tools are read-only. A future mutating tool would require a
   stronger transactional idempotency design before it could be used here.
@@ -844,11 +1039,12 @@ and incident queries do not scan processes.
 ## Roadmap
 
 Completed: M1 metrics/CLI, M2 monitoring/detection/events, M3 bridge/client, M4
-local LLM diagnosis, M5 stateful LangGraph investigations with local recovery.
+local LLM diagnosis, M5 stateful LangGraph investigations with local recovery,
+M6 durable structured incident memory and deterministic historical retrieval.
 
-Potential next milestone (not implemented): long-term incident memory/RAG and
-user-approved remediation with an audit trail. These are proposals, not current
-functionality.
+Potential next milestone (not implemented): user-approved remediation with an
+audit trail, and semantic retrieval only if tests demonstrate that structured
+retrieval is insufficient. These are proposals, not current functionality.
 
 ## License
 

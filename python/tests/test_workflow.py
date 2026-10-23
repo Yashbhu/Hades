@@ -106,6 +106,7 @@ class WorkflowTests(unittest.TestCase):
             [item["node"] for item in outcome.transitions],
             [
                 "initialize",
+                "retrieve_history",
                 "plan",
                 "validate",
                 "execute",

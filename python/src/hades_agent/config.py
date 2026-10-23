@@ -61,6 +61,11 @@ class AgentConfig(BaseModel):
     checkpoint_db: Path = Field(
         default_factory=lambda: Path.home() / ".hades" / "investigations.sqlite"
     )
+    incident_db: Path = Field(
+        default_factory=lambda: Path.home() / ".hades" / "incident_history.sqlite"
+    )
+    max_history_results: int = Field(default=5, ge=1, le=20)
+    max_history_chars: int = Field(default=8_000, ge=1_000, le=64_000)
     num_ctx: int = Field(default=16384, ge=2048, le=131_072)
     num_predict: int = Field(default=1024, ge=128, le=8192)
     temperature: float = Field(default=0.0, ge=0.0, le=1.0)
@@ -97,6 +102,9 @@ class AgentConfig(BaseModel):
                 "HADES_MAX_CONSECUTIVE_TOOL_FAILURES",
             ),
             "checkpoint_db": ("HADES_CHECKPOINT_DB",),
+            "incident_db": ("HADES_INCIDENT_DB",),
+            "max_history_results": ("HADES_MAX_HISTORY_RESULTS",),
+            "max_history_chars": ("HADES_MAX_HISTORY_CHARS",),
             "num_ctx": ("HADES_NUM_CTX",),
             "num_predict": ("HADES_NUM_PREDICT",),
             "temperature": ("HADES_TEMPERATURE",),

@@ -64,7 +64,15 @@ class LiveServiceIntegrationTests(unittest.TestCase):
     @classmethod
     def _stop(cls) -> None:
         process = getattr(cls, "process", None)
-        if process is None or process.poll() is not None:
+        if process is None:
+            return
+        stderr = getattr(process, "stderr", None)
+        if stderr is not None:
+            try:
+                stderr.close()
+            except OSError:
+                pass
+        if process.poll() is not None:
             return
         process.send_signal(signal.SIGINT)
         try:
