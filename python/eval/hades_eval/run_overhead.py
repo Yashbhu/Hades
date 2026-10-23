@@ -75,7 +75,7 @@ def _run_monitor(duration: float) -> dict[str, Any]:
         return {"status": "skipped", "reason": f"missing binary: {BINARY}"}
     started = time.perf_counter()
     process = subprocess.Popen(
-        [str(BINARY), "monitor", "--duration", f"{duration}s", "--json-lines"],
+        [str(BINARY), "monitor", "--duration", f"{int(duration)}s", "--json-lines"],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
@@ -102,11 +102,12 @@ def _run_monitor(duration: float) -> dict[str, Any]:
 
 
 def _run_python_worker(script: str, iterations: int) -> dict[str, Any]:
+    indented = "\n".join("    " + line if line.strip() else line for line in script.splitlines())
     code = f"""
 import time
 start = time.perf_counter()
 for _ in range({iterations}):
-{script}
+{indented}
 print(time.perf_counter() - start)
 """
     started = time.perf_counter()
@@ -173,6 +174,7 @@ def main() -> int:
     args = parser.parse_args()
 
     deterministic_script = """
+import tempfile
 from pathlib import Path
 from hades_client import DiskUsage
 from hades_eval.scenarios import SCENARIOS, metrics_for_scenario
